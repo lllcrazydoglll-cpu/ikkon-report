@@ -18,7 +18,26 @@ def get_gspread_client():
     except Exception as e:
         st.error(f"認證模組啟動失敗: {e}")
         return None
+import base64
 
+def get_gspread_client():
+    try:
+        info = dict(st.secrets["gcp_service_account"])
+        
+        # 核心改動：直接從 Base64 解碼出原始金鑰
+        decoded_key = base64.b64decode(info["private_key_base64"]).decode("utf-8")
+        info["private_key"] = decoded_key
+        
+        # 移除舊的 key 欄位（如果有），避免干擾
+        if "private_key_base64" in info:
+            del info["private_key_base64"]
+
+        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds = Credentials.from_service_account_info(info, scopes=scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"認證失敗: {e}")
+        return None
 # 2. 介面設定
 st.set_page_config(page_title="IKKON 日報表系統", page_icon="📝")
 st.title("IKKON 日報表系統")
@@ -72,3 +91,4 @@ if st.button("提交日報表"):
                 st.balloons()
             except Exception as e:
                 st.error(f"寫入失敗，請確認試算表 ID 是否正確。錯誤: {e}")
+
