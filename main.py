@@ -62,3 +62,12 @@ if st.button("提交日報表"):
         st.balloons()
     except Exception as e:
         st.error(f"❌ 發生錯誤：{e}")
+
+def get_gspread_client():
+    info = dict(st.secrets["gcp_service_account"])
+    # 強制將可能誤入的 "\\n" 轉回真正的換行符號
+    info["private_key"] = info["private_key"].replace("\\n", "\n")
+    
+    scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_info(info, scopes=scope)
+    return gspread.authorize(creds)
