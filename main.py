@@ -41,9 +41,14 @@ complaint_note = st.text_area("客訴、危機處理")
 
 # 5. 提交與儲存
 if st.button("提交日報表至 Google Sheets"):
-    # 讀取現有數據
-    existing_data = conn.read(worksheet="Sheet1", usecols=list(range(15)))
-    existing_data = existing_data.dropna(how="all")
+    try:
+        # 嘗試讀取現有數據
+        existing_data = conn.read(worksheet="Sheet1")
+        # 去除全空行
+        existing_data = existing_data.dropna(how="all")
+    except Exception:
+        # 如果讀取失敗（例如表格完全是空的），就建立一個空的資料表
+        existing_data = pd.DataFrame()
 
     # 建立新資料
     new_report = pd.DataFrame([{
@@ -64,8 +69,12 @@ if st.button("提交日報表至 Google Sheets"):
         "客訴處理": complaint_note
     }])
 
-    # 合併並更新
-    updated_df = pd.concat([existing_data, new_report], ignore_index=True)
+    # 合併數據：如果原本是空的，就直接用新資料；否則就串接
+    if existing_data.empty:
+        updated_df = new_report
+    else:
+        updated_df = pd.concat([existing_data, new_report], ignore_index=True)
+
+    # 更新回 Google Sheets
     conn.update(worksheet="Sheet1", data=updated_df)
-    
     st.success("✅ 數據已成功同步至 Google 試算表！")
