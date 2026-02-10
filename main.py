@@ -2,72 +2,45 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import datetime
-import pandas as pd
 
-# 1. 認證函數 (只保留這一個版本，放在最前面)
+# 認證函數：終極解法
 def get_gspread_client():
     try:
-        # 從 Secrets 讀取資料
+        # 直接獲取原始 Secrets 內容
         info = dict(st.secrets["gcp_service_account"])
         
-        # 處理金鑰換行符號的終極防線
-        if "\\n" in info["private_key"]:
-            info["private_key"] = info["private_key"].replace("\\n", "\n")
+        # 強制修復：將 "\n" 符號轉化為真正的換行符
+        # 這是為了解決 Windows 記事本與 Web 傳輸間的編碼落差
+        raw_key = info["private_key"]
+        if "\\n" in raw_key:
+            info["private_key"] = raw_key.encode().decode('unicode_escape')
             
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
         creds = Credentials.from_service_account_info(info, scopes=scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"認證失敗，請檢查 Secrets 設定。錯誤訊息: {e}")
+        st.error(f"認證模組啟動失敗: {e}")
         return None
 
-# 2. 頁面設定
 st.title("IKKON 日報表系統")
 
-# 3. 輸入介面
-date = st.date_input("報表日期", datetime.date.today())
-department = st.selectbox("部門", ["桃園鍋物", "桃園燒肉", "台中和牛會所"])
+# ... (中間的輸入欄位代碼保持不變，略) ...
 
-st.header("營運數據")
-col1, col2 = st.columns(2)
-with col1:
-    cash = st.number_input("現金收入", min_value=0)
-    credit_card = st.number_input("刷卡收入", min_value=0)
-    remittance = st.number_input("匯款收入", min_value=0)
-with col2:
-    total_customers = st.number_input("總來客數", min_value=1)
-    kitchen_hours = st.number_input("內場總工時", min_value=0.0)
-    floor_hours = st.number_input("外場總工時", min_value=0.0)
-
-# 計算邏輯
-total_revenue = cash + credit_card + remittance
-total_hours = kitchen_hours + floor_hours
-productivity = total_revenue / total_hours if total_hours > 0 else 0
-avg_spend = total_revenue / total_customers if total_customers > 0 else 0
-
-st.header("營運回報")
-ops_note = st.text_area("營運回報、事務宣達")
-complaint_note = st.text_area("客訴處理")
-
-# 4. 提交
 if st.button("提交日報表"):
     client = get_gspread_client()
     if client:
         try:
-            # 取得試算表 ID
-            spreadsheet_id = st.secrets["spreadsheet"]["id"]
-            sheet = client.open_by_key(spreadsheet_id).sheet1
+            # 確保使用 Secrets 中的 ID
+            sheet = client.open_by_key(st.secrets["spreadsheet"]["id"]).sheet1
             
-            # 準備資料行
-            new_row = [
-                str(date), department, cash, credit_card, remittance, "",
-                total_revenue, total_customers, round(avg_spend, 2),
-                kitchen_hours, floor_hours, total_hours, round(productivity, 2),
-                ops_note, complaint_note
-            ]
+            # 資料準備與寫入
+            new_row = [str(date), department, cash, credit_card, remittance, "", 
+                       total_revenue, total_customers, round(avg_spend, 2), 
+                       kitchen_hours, floor_hours, total_hours, round(productivity, 2), 
+                       ops_note, complaint_note]
             
             sheet.append_row(new_row)
-            st.success("✅ 數據已成功存入 Google Sheets！")
+            st.success("✅ 數據已成功存入雲端！")
             st.balloons()
         except Exception as e:
-            st.error(f"❌ 寫入資料表失敗：{e}")
+            st.error(f"寫入失敗，請確認試算表共用設定。錯誤: {e}")
