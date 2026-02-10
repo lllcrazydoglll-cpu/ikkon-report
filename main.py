@@ -2,6 +2,7 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import datetime
+import pandas as pd
 
 # 1. 頁面設定
 st.title("IKKON 日報表系統")
@@ -74,3 +75,4 @@ def get_gspread_client():
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(info, scopes=scope)
     return gspread.authorize(creds)
+
