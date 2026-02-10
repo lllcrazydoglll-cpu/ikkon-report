@@ -12,10 +12,10 @@ def get_gspread_client():
         # 2. 構建 Google 需要的認證內容
         # 這裡用 info 重新組裝，避免 TOML 格式讀取時產生的任何隱形問題
         info = {
-            "type": s["type"],
+       "type": s["type"],
             "project_id": s["project_id"],
             "private_key_id": s["private_key_id"],
-            "private_key": s["private_key"].replace("\\n", "\n").strip(), # 強制清洗字串並去空格
+            "private_key": s["private_key"].strip(), # 只需要 strip() 去掉前後可能的空格
             "client_email": s["client_email"],
             "client_id": s["client_id"],
             "auth_uri": s["auth_uri"],
@@ -95,3 +95,4 @@ if st.button("確認提交日報表", type="primary", use_container_width=True):
                     st.balloons()
                 except Exception as e:
                     st.error(f"雲端寫入失敗：{e}")
+
