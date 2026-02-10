@@ -1,4 +1,2 @@
-Plaintext
-
 st-gsheets-connection
 pandas
