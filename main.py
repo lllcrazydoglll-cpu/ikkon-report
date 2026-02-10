@@ -39,7 +39,7 @@ with col1:
     amount_note = st.text_input("金額備註", placeholder="若有特殊溢收/短少請註記")
 
 with col2:
-    st.subheader("👥 營運指標")
+    st.subheader("💹 營運指標")
     total_customers = st.number_input("總來客數", min_value=1, step=1)
     kitchen_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
     floor_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
@@ -94,3 +94,4 @@ if st.button("確認提交日報表", type="primary", use_container_width=True):
                 st.balloons()
             except Exception as e:
                 st.error(f"雲端寫入失敗：{e}")
+
