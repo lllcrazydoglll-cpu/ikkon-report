@@ -4,19 +4,25 @@ from google.oauth2.service_account import Credentials
 import datetime
 import pandas as pd
 
-# 1. 頁面設定
-st.title("IKKON 日報表系統")
-
-# 2. 認證函數
+# 1. 認證函數 (只保留這一個版本，放在最前面)
 def get_gspread_client():
-    # 從 Secrets 讀取資料
-    info = dict(st.secrets["gcp_service_account"])
-    # 關鍵修正：處理 private_key 中的 \n 換行符號
-    info["private_key"] = info["private_key"].replace("\\n", "\n")
-    
-    scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_info(info, scopes=scope)
-    return gspread.authorize(creds)
+    try:
+        # 從 Secrets 讀取資料
+        info = dict(st.secrets["gcp_service_account"])
+        
+        # 處理金鑰換行符號的終極防線
+        if "\\n" in info["private_key"]:
+            info["private_key"] = info["private_key"].replace("\\n", "\n")
+            
+        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        creds = Credentials.from_service_account_info(info, scopes=scope)
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"認證失敗，請檢查 Secrets 設定。錯誤訊息: {e}")
+        return None
+
+# 2. 頁面設定
+st.title("IKKON 日報表系統")
 
 # 3. 輸入介面
 date = st.date_input("報表日期", datetime.date.today())
@@ -45,34 +51,23 @@ complaint_note = st.text_area("客訴處理")
 
 # 4. 提交
 if st.button("提交日報表"):
-    try:
-        client = get_gspread_client()
-        # 使用 Spreadsheet ID 開啟
-        sheet = client.open_by_key(st.secrets["spreadsheet"]["id"]).sheet1
-        
-        # 準備資料行
-        new_row = [
-            str(date), department, cash, credit_card, remittance, "",
-            total_revenue, total_customers, round(avg_spend, 2),
-            kitchen_hours, floor_hours, total_hours, round(productivity, 2),
-            ops_note, complaint_note
-        ]
-        
-        sheet.append_row(new_row)
-        st.success("✅ 數據已成功存入 Google Sheets！")
-        st.balloons()
-    except Exception as e:
-        st.error(f"❌ 發生錯誤：{e}")
-
-def get_gspread_client():
-    # 讀取 Secrets
-    info = dict(st.secrets["gcp_service_account"])
-    
-    # 這是最後一道防線：如果裡面還有任何隱形的 \n 字串，強制轉換
-    if "\\n" in info["private_key"]:
-        info["private_key"] = info["private_key"].replace("\\n", "\n")
-        
-    scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_info(info, scopes=scope)
-    return gspread.authorize(creds)
-
+    client = get_gspread_client()
+    if client:
+        try:
+            # 取得試算表 ID
+            spreadsheet_id = st.secrets["spreadsheet"]["id"]
+            sheet = client.open_by_key(spreadsheet_id).sheet1
+            
+            # 準備資料行
+            new_row = [
+                str(date), department, cash, credit_card, remittance, "",
+                total_revenue, total_customers, round(avg_spend, 2),
+                kitchen_hours, floor_hours, total_hours, round(productivity, 2),
+                ops_note, complaint_note
+            ]
+            
+            sheet.append_row(new_row)
+            st.success("✅ 數據已成功存入 Google Sheets！")
+            st.balloons()
+        except Exception as e:
+            st.error(f"❌ 寫入資料表失敗：{e}")
