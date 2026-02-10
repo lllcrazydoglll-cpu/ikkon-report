@@ -2,54 +2,21 @@ import streamlit as st
 import gspread
 from google.oauth2.service_account import Credentials
 import datetime
+import os
 
-# 🔐 使用「多行字串」語法，這會原封不動地讀取金鑰，避開所有轉義問題
-PRIVATE_KEY = """-----BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCkNua/W7/ZZO4T
-A5tRKXi8Q6RvNqFdshrzxgZxYMZ9bYF1FrqpsDAleEC+Yfa4lXqwwLKEyXeO6sBs
-5KQGcWH4YK3PnWu0nYYfMuBH0f4zlkRnFuFUhRGlE75BbGwWW6S8EPmezSFD4wJw
-BiDOG8nb6XWzksJOlywYXOnorf/v/SdnwkgJFa5dL5GiBhe2AOFMswx09RJW4cdf
-Avl8X7LbwmzRVgLV1O51T0tXVs68Co6+mkOAfrZiL5Ooc8TsFhjKJHtEcgz4ldrt
-NTm5n5YWNaQIYOTTcKzYrrfJcmLarUl2P42PJVm6tl//dXo46ddhGOz2iTb7rp31
-/8xcytb1AgMBAAECggEAHaxoDOsk40E4PgpYThW64fYtKAWMqjQtZ6CAeItewrp/
-equFRnV2dcbhmCV2oksslPT1LUaEirhD1kmIlDt30xyRO+N723LdkhSs7310PFkq
-eiBpzk6Pbi9/oS3Y6D9eKLe+i6IQoUZLofeRhP0DgHAS20SpRO9PQgXEJM4QYgqo
-KdT8yB6BjBDwAyECtspJL4YhATPg2s6z7oXBeqIAyonzV0+N8lBuSrUJZlZIJ6tl
-UGBhV6pLXtBYfMEj/dLsHpGaRjperjyXGa7glNVL74sEufi6T0vCwIsnSE+FgxZf
-WihiFQMVIRlvaO3NPEnOwzf4PoaaTZVl0elAnp27PwKBgQDTibb2l5gdCW6mx6Uj
-9Cz9YmK4aj5qa1BKJ6VxgSNSXY1UNpHrz3BZ0Y4gsDu1t08jYNMwOt00dHYp5VhC
-bC9REe201NalMtn8PvXSf3ya41qvuGBeCmzv3uJ+7k+agl194jHVEiJiwv5kXdSO
-/CsQLBHD9K6H3MMMSLETcSJjAwKBgQDGutZrMp8zQkxS+FxwBu/7cFJp6UC5DDV1
-y/e/SoGIEqsKl087vo/jWu4ui+shMNcymtd0zqMH4Fl1laIaYb9fnK4KMsNCJUaA
-6SeWGWDuDxdClozhRhFYV3+5HFvYOyylrtfFJbqp1YTkDNKwSR68NBfqCW8vptrO
-p39zl7ApwKBgA1h3vNGr9bWa+udIbNelSIKgVhNUFmHJHMsgujlVIi3ZmN3eE/E
-tcTY3vbubziVuinwzCt27duNqpQH8EdzdKLaUYFpHZMh3mx4xzBj5EwgKfKH5YDN
-hArAvO9uwBZ0PNnj32ctWIOK9nD/Bp1tEoRZZV5SMmBh9OzoBFvIgnZlAoGBAKgp
-+EFT39V/V5iqI4aEyFRLkuGeiK9N/nsEs0uC36NmsKfQrDKRKa8pBf4LVleKvb9L
-ueBU7y4+EVVn3nlWl5tvuPJWTFZPtp5lLaNdLGGmEXe+b848/XZ07FaXAb0zLa+y
-CVIBgDgwvzg/BZY4+bImnsnjW9vF5MgM/wKDvDhnAoGASiQ3Qk9sLG4okksRwx7z
-xYvTIX3C7qP2J7iF+y4LSUZEfyPF755fhZj5+OVpDQWEwUdxMW45yoHzJKvip7v6
-sOTmDV6DLlV0s1w8dH43NFPEHROTlIlffh18eiZ3tcZ6UYFtRhGkhDnuiF5Jqy8n
-pYyAWlhXIQTiCG4HiQwWQeE=
------END PRIVATE KEY-----"""
-
+# 🔐 改用直接讀取檔案的方式，避開文字編碼問題
 def get_gspread_client():
     try:
-        info = {
-            "type": "service_account",
-            "project_id": "cybernetic-day-487005-f4",
-            "private_key_id": "12a1eb6bf22e6366b1f457ad250882ec200839b8",
-            "private_key": PRIVATE_KEY,
-            "client_email": "ikkon-service@cybernetic-day-487005-f4.iam.gserviceaccount.com",
-            "client_id": "100319064175689578515",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.google.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/ikkon-service%40cybernetic-day-487005-f4.iam.gserviceaccount.com"
-        }
+        # 指定讀取剛才上傳的 key.json
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds = Credentials.from_service_account_info(info, scopes=scope)
-        return gspread.authorize(creds)
+        
+        # 檢查檔案是否存在
+        if os.path.exists("key.json"):
+            creds = Credentials.from_service_account_file("key.json", scopes=scope)
+            return gspread.authorize(creds)
+        else:
+            st.error("找不到 key.json 檔案，請確認已上傳至 GitHub。")
+            return None
     except Exception as e:
         st.error(f"認證失敗：{e}")
         return None
@@ -93,6 +60,7 @@ if st.button("確認提交日報表", type="primary", use_container_width=True):
         client = get_gspread_client()
         if client:
             try:
+                # 您的試算表 ID
                 sheet = client.open_by_key("16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08").sheet1
                 new_row = [
                     str(date), department, cash, credit_card, remittance, 
