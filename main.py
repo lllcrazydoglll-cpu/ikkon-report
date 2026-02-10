@@ -35,7 +35,7 @@ with col1:
     cash = st.number_input("現金收入", min_value=0, step=100)
     credit_card = st.number_input("刷卡收入", min_value=0, step=100)
     remittance = st.number_input("匯款收入", min_value=0, step=100)
-    amount_note = st.text_input("金額備註", placeholder="若有特殊溢收/短少請註記")
+    amount_note = st.text_input("金額備註", value="無", placeholder="若有特殊溢收/短少請註記")
 
 with col2:
     # ✅ 依照您的要求，圖示已更新為 💹
@@ -78,34 +78,37 @@ if st.button("確認提交日報表", type="primary", use_container_width=True):
         client = get_gspread_client()
         if client:
             try:
+                # 您的試算表 ID
                 sheet = client.open_by_key("16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08").sheet1
                 
                 # 整理標籤字串
                 tags_str = ", ".join(complaint_tags) if complaint_tags else "無"
                 
-                # 嚴格對照試算表欄位順序
+                # 根據您最新上傳的試算表順序校準：
+                # 日期(A), 部門(B), 現金(C), 刷卡(D), 匯款(E), 金額備註(F), 總營業額(G), 總來客數(H), 客單價(I), 
+                # 內場工時(J), 外場工時(K), 總工時(L), 工時產值(M), 營運回報(N), 客訴標籤(O), 客訴原因(P), 處理結果(Q)
                 new_row = [
-                    str(date),          # A: 日期
-                    department,         # B: 部門
-                    cash,               # C: 現金
-                    credit_card,        # D: 刷卡
-                    remittance,         # E: 匯款
-                    amount_note,        # F: 金額備註
-                    total_revenue,      # G: 總營業額
-                    total_customers,    # H: 總來客數
-                    round(avg_spend, 1),# I: 客單價
-                    kitchen_hours,      # J: 內場工時
-                    floor_hours,        # K: 外場工時
-                    total_hours,        # L: 總工時
-                    round(productivity, 1), # M: 工時產值
-                    ops_note,           # N: 營運回報
-                    tags_str,           # O: 客訴標籤
-                    complaint_reason,   # P: 客訴原因
-                    complaint_action    # Q: 處理結果
+                    str(date),          # A
+                    department,         # B
+                    cash,               # C
+                    credit_card,        # D
+                    remittance,         # E
+                    amount_note,        # F
+                    total_revenue,      # G
+                    total_customers,    # H
+                    round(avg_spend, 1),# I
+                    kitchen_hours,      # J
+                    floor_hours,        # K
+                    total_hours,        # L
+                    round(productivity, 1), # M
+                    ops_note,           # N
+                    tags_str,           # O
+                    complaint_reason,   # P
+                    complaint_action    # Q
                 ]
                 
                 sheet.append_row(new_row)
-                st.success("✅ 資料已依照標籤化格式存檔成功！")
+                st.success("✅ 資料已依照校準後的格式存檔成功！")
                 st.balloons()
             except Exception as e:
                 st.error(f"雲端寫入失敗：{e}")
