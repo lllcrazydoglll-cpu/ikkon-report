@@ -119,7 +119,6 @@ daily_labor_cost = total_hours * avg_hourly_rate
 labor_cost_ratio = daily_labor_cost / total_revenue if total_revenue > 0 else 0
 
 # 顯示當日即時分析
-st.markdown("#### 🔍 今日即時診斷")
 c1, c2, c3 = st.columns(3)
 c1.metric("今日工時產值", f"{int(productivity):,} 元/小時")
 c2.metric("今日人事成本比", f"{labor_cost_ratio:.1%}")
@@ -157,6 +156,7 @@ if st.button("確認提交日報表", type="primary", use_container_width=True):
                 st.rerun()
             except Exception as e:
                 st.error(f"寫入失敗：{e}")
+
 
 
 
