@@ -21,13 +21,13 @@ def get_gspread_client():
 
 # 🎯 設定各店月目標 (可隨時修改)
 TARGETS = {
-    "桃園鍋物": 2000000,
-    "桃園燒肉": 2000000,
-    "台中和牛會所": 2000000
+    "桃園鍋物": 2500000,
+    "桃園燒肉": 3500000,
+    "台中和牛會所": 5000000
 }
 
-st.set_page_config(page_title="IKKON 日回報系統", page_icon="💹", layout="wide")
-st.title("IKKON 日回報系統")
+st.set_page_config(page_title="IKKON 經營指揮中心", page_icon="💹", layout="wide")
+st.title("IKKON 經營指揮中心")
 
 # 1. 基礎資訊
 col_head1, col_head2 = st.columns(2)
@@ -88,10 +88,10 @@ if client:
 st.divider()
 
 # 2. 數據輸入區
-st.subheader("📝 當日營運數據")
+st.subheader("📝 當日營運數據錄入")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("#### 💰 當日營收")
+    st.markdown("#### 💰 營收與成本")
     cash = st.number_input("現金收入", min_value=0, step=100)
     credit_card = st.number_input("刷卡收入", min_value=0, step=100)
     remittance = st.number_input("匯款收入", min_value=0, step=100)
@@ -99,7 +99,7 @@ with col1:
     amount_note = st.text_input("金額備註", value="無")
 
 with col2:
-    st.markdown("#### 💹 人力成本")
+    st.markdown("#### 💹 勞動力產出")
     total_customers = st.number_input("總來客數", min_value=1, step=1)
     kitchen_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
     floor_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
