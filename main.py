@@ -22,20 +22,20 @@ def get_gspread_client():
 # 🎯 經營參數設定 (由你本人在此修改，員工看不到此設定區)
 # 月營業額目標
 TARGETS = {
-    "桃園鍋物": 2500000,
-    "桃園燒肉": 3500000,
-    "台中和牛會所": 5000000
+    "桃園鍋物": 2000000,
+    "桃園燒肉": 2000000,
+    "台中和牛會所": 2000000
 }
 
 # 各店平均時薪 (含勞健保預估)
 HOURLY_RATES = {
-    "桃園鍋物": 210,
-    "桃園燒肉": 220,
-    "台中和牛會所": 250
+    "桃園鍋物": 290,
+    "桃園燒肉": 270,
+    "台中和牛會所": 270
 }
 
-st.set_page_config(page_title="IKKON 經營指揮中心", page_icon="💹", layout="wide")
-st.title("IKKON 經營指揮中心")
+st.set_page_config(page_title="IKKON 日回報系統", page_icon="💹", layout="wide")
+st.title("IKKON 日回報系統")
 
 # 1. 基礎資訊
 col_head1, col_head2 = st.columns(2)
@@ -93,17 +93,17 @@ if client:
 st.divider()
 
 # 2. 數據輸入區
-st.subheader("📝 當日營運數據錄入")
+st.subheader("📝 當日營運數據")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("#### 💰 營收數據")
+    st.markdown("#### 💰 營業數據")
     cash = st.number_input("現金收入", min_value=0, step=100)
     credit_card = st.number_input("刷卡收入", min_value=0, step=100)
     remittance = st.number_input("匯款收入", min_value=0, step=100)
     amount_note = st.text_input("金額備註", value="無")
 
 with col2:
-    st.markdown("#### 💹 勞動力產出")
+    st.markdown("#### 💹 人力成本")
     total_customers = st.number_input("總來客數", min_value=1, step=1)
     kitchen_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
     floor_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
@@ -157,3 +157,4 @@ if st.button("確認提交日報表", type="primary", use_container_width=True):
                 st.rerun()
             except Exception as e:
                 st.error(f"寫入失敗：{e}")
+
