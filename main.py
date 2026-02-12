@@ -78,7 +78,7 @@ if client:
                 total_labor_cost = (m_df['平均時薪'] * m_df['總工時']).sum()
                 avg_labor_ratio = total_labor_cost / mtd_rev if mtd_rev > 0 else 0
 
-                st.subheader(f"📊 {department} {current_month}月 營運狀況")
+                st.subheader(f" {department} {current_month}月 營運狀況")
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("月累計營收", f"{mtd_rev:,} 元", f"{achieve:.1%} 達成")
                 m2.metric("目標達成率", f"{achieve:.1%}")
@@ -93,7 +93,7 @@ if client:
 st.divider()
 
 # 2. 數據輸入區
-st.subheader("📝 當日營運數據")
+st.subheader("當日營運數據")
 col1, col2 = st.columns(2)
 with col1:
     st.markdown("#### 💰 營業數據")
@@ -128,7 +128,7 @@ c3.metric("今日總營收", f"{total_revenue:,} 元")
 st.divider()
 
 # 4. 報告區
-st.subheader("✍️ 營運報告與客訴")
+st.subheader("營運報告與客訴")
 ops_note = st.text_area("營運回報")
 complaint_tags = st.multiselect("客訴分類", ["餐點品質", "服務態度", "環境衛生", "上菜效率", "訂位系統", "其他"])
 complaint_reason = st.text_area("詳細原因")
@@ -157,5 +157,6 @@ if st.button("確認提交日報表", type="primary", use_container_width=True):
                 st.rerun()
             except Exception as e:
                 st.error(f"寫入失敗：{e}")
+
 
 
