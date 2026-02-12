@@ -3,8 +3,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 import os
+import pandas as pd
 
-# 🔐 認證邏輯：讀取 key.json
+# 🔐 認證邏輯
 def get_gspread_client():
     try:
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -12,39 +13,91 @@ def get_gspread_client():
             creds = Credentials.from_service_account_file("key.json", scopes=scope)
             return gspread.authorize(creds)
         else:
-            st.error("找不到 key.json 檔案，請確認檔案已上傳至 GitHub。")
+            st.error("找不到 key.json 檔案。")
             return None
     except Exception as e:
         st.error(f"認證失敗：{e}")
         return None
 
-# --- UI 介面設定 ---
-st.set_page_config(page_title="IKKON 日報表系統", page_icon="📝")
+# 🎯 設定各店本月目標 (你可以隨時修改這裡的數字)
+TARGETS = {
+    "桃園鍋物": 2000000,
+    "桃園燒肉": 2000000,
+    "台中和牛會所": 2000000
+}
+
+# --- UI 介面 ---
+st.set_page_config(page_title="IKKON 日報表系統", page_icon="📝", layout="wide")
 st.title("IKKON 日報表系統")
 
 # 1. 基礎資訊
-date = st.date_input("報表日期", datetime.date.today())
-department = st.selectbox("部門", ["桃園鍋物", "桃園燒肉", "台中和牛會所"])
+col_head1, col_head2 = st.columns(2)
+with col_head1:
+    date = st.date_input("報表日期", datetime.date.today())
+with col_head2:
+    department = st.selectbox("部門", list(TARGETS.keys()))
 
 st.divider()
 
-# 2. 數據輸入
+# 🚀 數據統計看板 (MTD 累積與目標達成)
+client = get_gspread_client()
+if client:
+    try:
+        sheet = client.open_by_key("16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08").sheet1
+        data = sheet.get_all_records()
+        
+        if data:
+            df = pd.DataFrame(data)
+            # 轉換日期格式以便計算
+            df['日期'] = pd.to_datetime(df['日期'])
+            current_month = datetime.date.today().month
+            current_year = datetime.date.today().year
+            
+            # 過濾出：該部門 + 該月份 + 該年度 的資料
+            monthly_df = df[
+                (df['部門'] == department) & 
+                (df['日期'].dt.month == current_month) & 
+                (df['日期'].dt.year == current_year)
+            ]
+            
+            mtd_revenue = monthly_df['總營業額'].sum()
+            target = TARGETS[department]
+            achievement_rate = (mtd_revenue / target) if target > 0 else 0
+            
+            # 顯示看板
+            st.subheader(f"📊 {department} {current_month}月 營運進度")
+            m_col1, m_col2, m_col3 = st.columns(3)
+            m_col1.metric("本月累計營收", f"{mtd_revenue:,} 元")
+            m_col2.metric("本月目標", f"{target:,} 元")
+            m_col3.metric("目標達成率", f"{achievement_rate:.1%}")
+            
+            # 進度條
+            progress_color = "green" if achievement_rate >= 1 else "orange"
+            st.progress(min(achievement_rate, 1.0))
+            if achievement_rate >= 1:
+                st.success("🎉 恭喜！已達成月目標！")
+        else:
+            st.info("目前尚無歷史數據，開始輸入第一筆吧！")
+    except Exception as e:
+        st.warning(f"暫時無法讀取統計數據：{e}")
+
+st.divider()
+
+# 2. 數據輸入 (保持原有功能)
 col1, col2 = st.columns(2)
 with col1:
     st.subheader("💰 營收數據")
     cash = st.number_input("現金收入", min_value=0, step=100)
     credit_card = st.number_input("刷卡收入", min_value=0, step=100)
     remittance = st.number_input("匯款收入", min_value=0, step=100)
-    amount_note = st.text_input("金額備註", value="無", placeholder="若有特殊溢收/短少請註記")
+    amount_note = st.text_input("金額備註", value="無")
 
 with col2:
-    # ✅ 依照您的要求，圖示已更新為 💹
     st.subheader("💹 營運指標")
     total_customers = st.number_input("總來客數", min_value=1, step=1)
     kitchen_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
     floor_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
 
-# 自動計算
 total_revenue = cash + credit_card + remittance
 total_hours = kitchen_hours + floor_hours
 avg_spend = total_revenue / total_customers if total_customers > 0 else 0
@@ -54,61 +107,26 @@ st.divider()
 
 # 3. 營運與客訴分析
 st.subheader("✍️ 營運報告與客訴分析")
-ops_note = st.text_area("營運回報、事務宣達", placeholder="今日物料、人力狀況...")
+ops_note = st.text_area("營運回報、事務宣達")
+complaint_tags = st.multiselect("客訴分類標籤", ["餐點品質", "服務態度", "環境衛生", "上菜效率", "訂位系統", "其他"])
+complaint_reason = st.text_area("客訴原因詳細說明")
+complaint_action = st.text_area("處理結果與補償")
 
-st.markdown("---")
-st.markdown("#### 🔍 客訴標籤化系統")
-complaint_tags = st.multiselect(
-    "客訴分類標籤 (可多選)",
-    ["餐點品質", "服務態度", "環境衛生", "上菜效率", "訂位系統", "其他"],
-    help="選擇分類有助於後台自動生成經營分析圖表"
-)
-
-# 員工填寫的具體原因
-complaint_reason = st.text_area("客訴原因詳細說明", placeholder="請描述發生經過、客訴具體內容...")
-
-# 處理結果
-complaint_action = st.text_area("處理結果與補償", placeholder="例如：招待肉盤一份、當場致歉並更換食材...")
-
-st.metric("當日總營業額", f"{total_revenue:,} 元")
-
-# 4. 提交邏輯
 if st.button("確認提交日報表", type="primary", use_container_width=True):
-    with st.spinner('正在同步至雲端試算表...'):
-        client = get_gspread_client()
+    with st.spinner('正在同步至雲端...'):
         if client:
             try:
-                # 您的試算表 ID
                 sheet = client.open_by_key("16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08").sheet1
-                
-                # 整理標籤字串
                 tags_str = ", ".join(complaint_tags) if complaint_tags else "無"
-                
-                # 根據您最新上傳的試算表順序校準：
-                # 日期(A), 部門(B), 現金(C), 刷卡(D), 匯款(E), 金額備註(F), 總營業額(G), 總來客數(H), 客單價(I), 
-                # 內場工時(J), 外場工時(K), 總工時(L), 工時產值(M), 營運回報(N), 客訴標籤(O), 客訴原因(P), 處理結果(Q)
                 new_row = [
-                    str(date),          # A
-                    department,         # B
-                    cash,               # C
-                    credit_card,        # D
-                    remittance,         # E
-                    amount_note,        # F
-                    total_revenue,      # G
-                    total_customers,    # H
-                    round(avg_spend, 1),# I
-                    kitchen_hours,      # J
-                    floor_hours,        # K
-                    total_hours,        # L
-                    round(productivity, 1), # M
-                    ops_note,           # N
-                    tags_str,           # O
-                    complaint_reason,   # P
-                    complaint_action    # Q
+                    str(date), department, cash, credit_card, remittance, amount_note,
+                    total_revenue, total_customers, round(avg_spend, 1),
+                    kitchen_hours, floor_hours, total_hours, round(productivity, 1),
+                    ops_note, tags_str, complaint_reason, complaint_action
                 ]
-                
                 sheet.append_row(new_row)
-                st.success("✅ 資料已依照校準後的格式存檔成功！")
+                st.success("✅ 資料存檔成功！")
                 st.balloons()
+                st.rerun() # 提交後重新整理，更新上方進度條
             except Exception as e:
-                st.error(f"雲端寫入失敗：{e}")
+                st.error(f"寫入失敗：{e}")
