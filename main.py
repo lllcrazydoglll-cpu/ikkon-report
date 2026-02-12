@@ -21,13 +21,13 @@ def get_gspread_client():
 
 # 🎯 設定各店月目標 (可隨時修改)
 TARGETS = {
-    "桃園鍋物": 2500000,
-    "桃園燒肉": 3500000,
-    "台中和牛會所": 5000000
+    "桃園鍋物": 2000000,
+    "桃園燒肉": 2000000,
+    "台中和牛會所": 2000000
 }
 
-st.set_page_config(page_title="IKKON 經營指揮中心", page_icon="💹", layout="wide")
-st.title("IKKON 經營指揮中心")
+st.set_page_config(page_title="IKKON 日回報系統", page_icon="💹", layout="wide")
+st.title("IKKON 日回報系統")
 
 # 1. 基礎資訊
 col_head1, col_head2 = st.columns(2)
@@ -54,15 +54,23 @@ if client:
             m_df = df[(df['部門'] == department) & (df['日期'].dt.month == current_month) & (df['日期'].dt.year == current_year)]
             
             if not m_df.empty:
+                # 確保數值格式正確
+                m_df['總營業額'] = pd.to_numeric(m_df['總營業額'], errors='coerce')
+                m_df['工時產值'] = pd.to_numeric(m_df['工時產值'], errors='coerce')
+                m_df['平均時薪'] = pd.to_numeric(m_df['平均時薪'], errors='coerce')
+                m_df['總工時'] = pd.to_numeric(m_df['總工時'], errors='coerce')
+
                 mtd_rev = m_df['總營業額'].sum()
                 target = TARGETS[department]
-                achieve = m_df['總營業額'].sum() / target if target > 0 else 0
+                achieve = mtd_rev / target if target > 0 else 0
                 
-                # 計算月平均產值與人事占比
+                # 計算月平均產值
                 avg_prod = m_df['工時產值'].mean()
-                # 人事成本占比需從各行計算：(時薪*工時)/營收
+                
+                # 計算月累計人事成本占比
+                # 公式: $\text{Labor Cost Ratio} = \frac{\sum (\text{Hourly Rate} \times \text{Hours})}{\sum \text{Revenue}}$
                 total_labor_cost = (m_df['平均時薪'] * m_df['總工時']).sum()
-                avg_labor_ratio = total_labor_cost / m_df['總營業額'].sum() if m_df['總營業額'].sum() > 0 else 0
+                avg_labor_ratio = total_labor_cost / mtd_rev if mtd_rev > 0 else 0
 
                 # 顯示看板
                 st.subheader(f"📊 {department} {current_month}月 戰報")
@@ -73,17 +81,17 @@ if client:
                 m4.metric("月人事成本比", f"{avg_labor_ratio:.1%}")
                 st.progress(min(achieve, 1.0))
             else:
-                st.info("本月尚無數據。")
+                st.info("本月尚無歷史數據。")
     except Exception as e:
-        st.warning(f"統計看板載入中... (或尚未建立新欄位標題)")
+        st.warning(f"統計看板載入中... (若您剛新增欄位，請先提交一筆新資料)")
 
 st.divider()
 
 # 2. 數據輸入區
-st.subheader("📝 當日營運數據錄入")
+st.subheader("📝 當日營運數據")
 col1, col2 = st.columns(2)
 with col1:
-    st.markdown("#### 💰 營收與成本")
+    st.markdown("#### 💰 當日營收")
     cash = st.number_input("現金收入", min_value=0, step=100)
     credit_card = st.number_input("刷卡收入", min_value=0, step=100)
     remittance = st.number_input("匯款收入", min_value=0, step=100)
@@ -91,7 +99,7 @@ with col1:
     amount_note = st.text_input("金額備註", value="無")
 
 with col2:
-    st.markdown("#### 💹 勞動力產出")
+    st.markdown("#### 💹 人力成本")
     total_customers = st.number_input("總來客數", min_value=1, step=1)
     kitchen_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
     floor_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
@@ -107,8 +115,9 @@ daily_labor_cost = total_hours * avg_hourly_rate
 labor_cost_ratio = daily_labor_cost / total_revenue if total_revenue > 0 else 0
 
 # 顯示當日即時分析
+st.markdown("#### 🔍 今日即時診斷")
 c1, c2, c3 = st.columns(3)
-c1.metric("今日工時產值", f"{int(productivity):,} 元/時")
+c1.metric("今日工時產值", f"{int(productivity):,} 元/小時")
 c2.metric("今日人事成本比", f"{labor_cost_ratio:.1%}")
 c3.metric("今日總營收", f"{total_revenue:,} 元")
 
@@ -133,9 +142,9 @@ if st.button("確認提交日報表", type="primary", use_container_width=True):
                     str(date), department, cash, credit_card, remittance, amount_note,
                     total_revenue, total_customers, round(avg_spend, 1),
                     kitchen_hours, floor_hours, total_hours, 
-                    avg_hourly_rate,        # 新增：平均時薪
-                    round(productivity, 1), # 工時產值
-                    f"{labor_cost_ratio:.3%}", # 新增：人事成本占比
+                    avg_hourly_rate,        # M: 平均時薪 (新增)
+                    round(productivity, 1), # N: 工時產值
+                    f"{labor_cost_ratio:.1%}", # O: 人事成本占比 (新增)
                     ops_note, tags_str, complaint_reason, complaint_action
                 ]
                 sheet.append_row(new_row)
