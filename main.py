@@ -3,73 +3,40 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 import pandas as pd
-from PIL import Image, ImageDraw, ImageFont # 用於生成截圖圖片
-import io
 
-# 1. 密碼保護功能
+# 1. 密碼登入功能 (密碼預設為 IKKON888)
 def check_password():
     def password_entered():
-        if st.session_state["password"] == "IKKON888": # 你可以在此修改統一密碼
+        if st.session_state["password"] == "IKKON888":
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.text_input("請輸入店鋪管理密碼", type="password", on_change=password_entered, key="password")
+        st.title("IKKON 系統登入")
+        st.text_input("請輸入管理密碼", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
+        st.title("IKKON 系統登入")
         st.text_input("密碼錯誤，請重新輸入", type="password", on_change=password_entered, key="password")
-        st.error("😕 密碼不正確")
         return False
-    else:
-        return True
+    return True
 
-# 2. 認證邏輯 (改用 Streamlit Secrets)
+# 2. 認證邏輯 (從 Streamlit 雲端讀取金鑰)
 def get_gspread_client():
     try:
         scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        # 從 Streamlit Secrets 讀取內容
         creds_info = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_info, scopes=scope)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error(f"認證失敗，請檢查 Secrets 設定：{e}")
+        st.error(f"連線失敗：{e}")
         return None
 
-# 3. 生成截圖圖片功能
-def generate_report_image(date, dept, revenue, hours, prod, ratio, note):
-    # 創建一張簡單的白底圖片
-    img = Image.new('RGB', (600, 800), color=(255, 255, 255))
-    d = ImageDraw.Draw(img)
-    
-    # 這裡簡單模擬文字排版 (實際部署時建議上傳一個中文字體檔以防亂碼)
-    content = f"""
-    IKKON 日回報摘要
-    ------------------
-    日期: {date}
-    部門: {dept}
-    
-    總營業額: {revenue:,} 元
-    總工時: {hours} 小時
-    工時產值: {int(prod):,} 元/時
-    人事成本比: {ratio}
-    
-    營運回報:
-    {note[:100]}...
-    ------------------
-    (長按圖片儲存並傳至LINE)
-    """
-    d.text((50, 50), content, fill=(0, 0, 0))
-    
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    return buf.getvalue()
-
-# --- 主程式開始 ---
+# --- 主程式 ---
 if check_password():
-    
-    # 經營參數設定
+    # 經營參數設定 (在此修改目標與時薪)
     TARGETS = {"桃園鍋物": 2000000, "桃園燒肉": 2000000, "台中和牛會所": 2000000}
     HOURLY_RATES = {"桃園鍋物": 290, "桃園燒肉": 270, "台中和牛會所": 270}
 
@@ -84,10 +51,9 @@ if check_password():
         department = st.selectbox("部門", list(TARGETS.keys()))
 
     avg_hourly_rate = HOURLY_RATES[department]
-
     st.divider()
 
-    # 🚀 數據統計看板
+    # 🚀 數據統計看板 (月累計)
     client = get_gspread_client()
     if client:
         try:
@@ -117,11 +83,11 @@ if check_password():
                     m4.metric("月人事成本比", f"{avg_labor_ratio:.1%}")
                     st.progress(min(achieve, 1.0))
         except:
-            st.warning("數據讀取中...")
+            pass
 
     st.divider()
 
-    # 2. 數據輸入與計算
+    # 2. 數據輸入
     st.subheader("當日營運數據")
     c_in1, c_in2 = st.columns(2)
     with c_in1:
@@ -140,8 +106,6 @@ if check_password():
     labor_cost_ratio = (total_hours * avg_hourly_rate) / total_revenue if total_revenue > 0 else 0
     avg_spend = total_revenue / total_customers if total_customers > 0 else 0
 
-    st.markdown(f"**今日營收：{total_revenue:,} 元 | 產值：{int(productivity):,} 元/時 | 人事比：{labor_cost_ratio:.1%}**")
-
     st.divider()
 
     # 3. 報告區
@@ -150,15 +114,14 @@ if check_password():
     reason = st.text_area("詳細原因")
     action = st.text_area("處理結果")
 
-    # 4. 提交與生成圖卡
-    col_btn1, col_btn2 = st.columns(2)
-    
-    if col_btn1.button("確認提交日報表", type="primary", use_container_width=True):
+    # 4. 提交按鈕
+    if st.button("確認提交日報表", type="primary", use_container_width=True):
         if client:
             sheet = client.open_by_key("16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08").sheet1
-            new_row = [str(date), department, cash, credit_card, remittance, amount_note, total_revenue, total_customers, round(avg_spend, 1), k_hours, f_hours, total_hours, avg_hourly_rate, round(productivity, 1), f"{labor_cost_ratio:.1%}", ops_note, ", ".join(tags), reason, action]
+            tags_str = ", ".join(tags) if tags else "無"
+            new_row = [str(date), department, cash, credit_card, remittance, amount_note, total_revenue, total_customers, round(avg_spend, 1), k_hours, f_hours, total_hours, avg_hourly_rate, round(productivity, 1), f"{labor_cost_ratio:.1%}", ops_note, tags_str, reason, action]
             
-            # 覆蓋邏輯
+            # 自動覆蓋舊資料邏輯
             all_data = sheet.get_all_values()
             target_row = -1
             for i, row in enumerate(all_data[1:], start=2):
@@ -168,25 +131,29 @@ if check_password():
             
             if target_row != -1:
                 sheet.update(f"A{target_row}:S{target_row}", [new_row])
-                st.success("✅ 已更新紀錄！")
+                st.success("✅ 已覆蓋更新今日紀錄！")
             else:
                 sheet.append_row(new_row)
-                st.success("✅ 已新增紀錄！")
-            st.rerun()
+                st.success("✅ 已新增今日紀錄！")
+            st.balloons()
 
-    # 截圖按鈕功能：生成摘要文字，方便員工直接截圖手機螢幕
-    if col_btn2.button("生成截圖摘要", use_container_width=True):
-        st.info("💡 請對下方區域進行手機截圖，並傳至 LINE 群組")
+    st.divider()
+
+    # 5. 截圖專區 (點擊按鈕才顯示，方便截圖)
+    if st.checkbox("開啟截圖摘要模式"):
+        st.info("💡 請對下方區塊進行手機截圖，發送至 LINE 群組")
         st.markdown(f"""
-        <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border: 2px solid #464e5f;">
-            <h2 style="color: #1f77b4; margin-top:0;">IKKON 日報摘要 ({date})</h2>
+        <div style="background-color: #ffffff; padding: 20px; border: 2px solid #000000; color: #000000;">
+            <h2 style="text-align: center;">IKKON 日報摘要 ({date})</h2>
             <p><b>部門：</b>{department}</p>
             <hr>
             <p><b>今日總營收：</b> {total_revenue:,} 元</p>
             <p><b>工時產值：</b> {int(productivity):,} 元/小時</p>
             <p><b>人事成本比：</b> {labor_cost_ratio:.1%}</p>
             <p><b>總來客數：</b> {total_customers} 位</p>
+            <p><b>客單價：</b> {int(avg_spend):,} 元</p>
             <hr>
             <p><b>營運回報：</b><br>{ops_note}</p>
+            <p><b>客訴分類：</b>{", ".join(tags) if tags else "無"}</p>
         </div>
         """, unsafe_allow_html=True)
