@@ -42,7 +42,7 @@ if check_password():
     HOURLY_RATES = {"桃園鍋物": 290, "桃園燒肉": 270, "台中和牛會所": 270}
 
     st.set_page_config(page_title="IKKON Management System", layout="wide")
-    st.title("🏮 IKKON 營運數據管理")
+    st.title("IKKON 營運數據管理")
 
     # 1. 基礎設定
     col_h1, col_h2 = st.columns(2)
@@ -55,7 +55,7 @@ if check_password():
     st.divider()
 
     # 2. 數據輸入區
-    st.subheader("📊 財務與工時錄入")
+    st.subheader("財務與工時錄入")
     c_in1, c_in2 = st.columns(2)
     with c_in1:
         cash = st.number_input("現金收入", min_value=0, step=100)
@@ -77,7 +77,7 @@ if check_password():
     st.divider()
 
     # 3. 營運回報區
-    st.subheader("📝 營運與客訴摘要")
+    st.subheader("營運與客訴摘要")
     ops_note = st.text_area("營運狀況回報", height=100, placeholder="請詳述今日現場狀況...")
     announcement = st.text_area("事項宣達", height=60, placeholder="需讓全體同仁知悉的事項...")
     
@@ -119,7 +119,7 @@ if check_password():
     if st.checkbox("開啟回報模式 (截圖/複製)"):
         
         # --- 區塊一：財務專用截圖 (保留原設計，適合手機拍下) ---
-        st.markdown("### 📍 區塊 A：財務部截圖 (請傳至財務群)")
+        st.markdown("### 今日營收截圖 (請傳至財務群)")
         st.markdown(f"""
         <div style="background-color: #ffffff; padding: 20px; border: 1px solid #000; color: #000000; font-family: sans-serif; width: 100%; max-width: 400px;">
             <div style="font-size: 18px; font-weight: bold; border-bottom: 2px solid #000; margin-bottom: 10px;">
@@ -149,16 +149,16 @@ if check_password():
         ops_report_for_line = f"""【IKKON 營運回報 - {date}】
 部門：{department}
 ------------------------
-📝 營運回報：
+營運回報：
 {ops_note if ops_note else "無特別狀況"}
 
-📢 事項宣達：
+事項宣達：
 {announcement if announcement else "無"}
 
-⚠️ 客訴處理 ({", ".join(tags) if tags else "無"})：
+客訴處理 ({", ".join(tags) if tags else "無"})：
 {reason_action if reason_action else "無"}
 ------------------------
-(本訊息由 IKKON 管理系統自動生成)"""
 
         st.code(ops_report_for_line, language="text")
-        st.caption("💡 點擊上方灰色框框右上角的圖示即可「一鍵複製」，再到 LINE 貼上。")
+        st.caption("※點擊上方灰色框框右上角的圖示即可「一鍵複製」，再到 LINE 貼上。")
+
