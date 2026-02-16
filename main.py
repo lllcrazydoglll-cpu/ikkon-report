@@ -119,7 +119,7 @@ if check_password():
     if st.checkbox("開啟回報模式 (截圖/複製)"):
         
         # --- 區塊一：財務專用截圖 (保留原設計，適合手機拍下) ---
-        st.markdown("### 今日營收截圖 (請傳至財務群)")
+        st.markdown("## 今日營收截圖 (請傳至財務群)")
         st.markdown(f"""
         <div style="background-color: #ffffff; padding: 20px; border: 1px solid #000; color: #000000; font-family: sans-serif; width: 100%; max-width: 400px;">
             <div style="font-size: 18px; font-weight: bold; border-bottom: 2px solid #000; margin-bottom: 10px;">
@@ -143,7 +143,7 @@ if check_password():
         st.write("") # 間距
 
         # --- 區塊二：營運部文字複製 (解決文字過長問題) ---
-        st.markdown("### 📍 區塊 B：營運部複製區 (請傳至公司群組)")
+        st.markdown("##今日營運狀況複製區 (請傳至公司群組)")
         
         # 組合純文字訊息
         ops_report_for_line = f"""【IKKON 營運回報 - {date}】
@@ -161,5 +161,6 @@ if check_password():
 """
         st.code(ops_report_for_line, language="text")
         st.caption("※點擊上方灰色框框右上角的圖示即可「一鍵複製」，再到 LINE 貼上。")
+
 
 
