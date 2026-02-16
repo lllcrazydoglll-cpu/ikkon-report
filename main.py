@@ -153,4 +153,12 @@ if check_password():
 {ops_note if ops_note else "無特別狀況"}
 
 📢 事項宣達：
-{announcement if announcement else
+{announcement if announcement else "無"}
+
+⚠️ 客訴處理 ({", ".join(tags) if tags else "無"})：
+{reason_action if reason_action else "無"}
+------------------------
+(本訊息由 IKKON 管理系統自動生成)"""
+
+        st.code(ops_report_for_line, language="text")
+        st.caption("💡 點擊上方灰色框框右上角的圖示即可「一鍵複製」，再到 LINE 貼上。")
