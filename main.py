@@ -42,7 +42,7 @@ if check_password():
     HOURLY_RATES = {"桃園鍋物": 290, "桃園燒肉": 270, "台中和牛會所": 270}
 
     st.set_page_config(page_title="IKKON Management System", layout="wide")
-    st.title("IKKON 營運數據管理")
+    st.title("IKKON 營運數據")
 
     # 1. 基礎設定
     col_h1, col_h2 = st.columns(2)
@@ -143,7 +143,7 @@ if check_password():
         st.write("") # 間距
 
         # --- 區塊二：營運部文字複製 (解決文字過長問題) ---
-        st.markdown("##今日營運狀況複製區 (請傳至公司群組)")
+        st.markdown("## 今日營運狀況複製區 (請傳至公司群組)")
         
         # 組合純文字訊息
         ops_report_for_line = f"""【IKKON 營運回報 - {date}】
@@ -161,6 +161,7 @@ if check_password():
 """
         st.code(ops_report_for_line, language="text")
         st.caption("※點擊上方灰色框框右上角的圖示即可「一鍵複製」，再到 LINE 貼上。")
+
 
 
 
