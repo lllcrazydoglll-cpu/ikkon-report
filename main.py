@@ -85,7 +85,8 @@ if check_password():
     with col_c1:
         tags = st.multiselect("客訴分類", ["餐點品質", "服務態度", "環境衛生", "上菜效率", "訂位系統", "其他"])
     with col_c2:
-        reason_action = st.text_input("客訴原因與處理結果", placeholder="例如：招待肉盤乙份，客人表示理解")
+        # 修改點：改為 text_area 支援自動換行
+        reason_action = st.text_area("客訴原因與處理結果", height=60, placeholder="例如：招待肉盤乙份，客人表示理解")
 
     # 4. 資料儲存按鈕
     if st.button("確認提交報表至雲端", type="primary", use_container_width=True):
@@ -118,7 +119,7 @@ if check_password():
     # 5. 分流回報區 (財務截圖 vs 營運複製)
     if st.checkbox("開啟回報模式 (截圖/複製)"):
         
-        # --- 區塊一：財務專用截圖 (保留原設計，適合手機拍下) ---
+        # --- 區塊一：財務專用截圖 ---
         st.markdown("#### 今日營收截圖 (請傳至財務群)")
         st.markdown(f"""
         <div style="background-color: #ffffff; padding: 20px; border: 1px solid #000; color: #000000; font-family: sans-serif; width: 100%; max-width: 400px;">
@@ -140,12 +141,11 @@ if check_password():
         </div>
         """, unsafe_allow_html=True)
 
-        st.write("") # 間距
+        st.write("") 
 
-        # --- 區塊二：營運部文字複製 (解決文字過長問題) ---
+        # --- 區塊二：營運部文字複製 ---
         st.markdown("#### 今日營運狀況複製區 (請傳至公司群組)")
         
-        # 組合純文字訊息
         ops_report_for_line = f"""【IKKON 營運回報 - {date}】
 部門：{department}
 ------------------------
@@ -161,8 +161,3 @@ if check_password():
 """
         st.code(ops_report_for_line, language="text")
         st.caption("※點擊上方灰色框框右上角的圖示即可「一鍵複製」，再到 LINE 貼上。")
-
-
-
-
-
