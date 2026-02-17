@@ -37,11 +37,28 @@ def get_gspread_client():
 
 # --- 主程式執行 ---
 if check_password():
-    # 經營參數 (時薪依部門自動套用)
-    TARGETS = {"桃園鍋物": 2000000, "桃園燒肉": 2000000, "台中和牛會所": 2000000}
-    HOURLY_RATES = {"桃園鍋物": 290, "桃園燒肉": 270, "台中和牛會所": 270}
+    # 初始化經營參數 (若無設定則使用預設值)
+    if "targets" not in st.session_state:
+        st.session_state.targets = {"桃園鍋物": 2000000, "桃園燒肉": 2000000, "台中和牛會所": 2000000}
+    if "hourly_rates" not in st.session_state:
+        st.session_state.hourly_rates = {"桃園鍋物": 290, "桃園燒肉": 270, "台中和牛會所": 270}
 
     st.set_page_config(page_title="IKKON Management System", layout="wide")
+
+    # --- 管理者後台 (側邊欄) ---
+    with st.sidebar:
+        st.title("管理者後台")
+        admin_mode = st.checkbox("開啟參數編輯")
+        if admin_mode:
+            st.subheader("月目標設定")
+            for dept in st.session_state.targets.keys():
+                st.session_state.targets[dept] = st.number_input(f"{dept} 目標", value=st.session_state.targets[dept], step=100000)
+            
+            st.subheader("平均時薪設定")
+            for dept in st.session_state.hourly_rates.keys():
+                st.session_state.hourly_rates[dept] = st.number_input(f"{dept} 時薪", value=st.session_state.hourly_rates[dept], step=5)
+            st.info("提示：此處修改僅影響本次作業，長期修改建議直接更動程式碼預設值。")
+
     st.title("IKKON 營運數據")
 
     # 1. 基礎設定
@@ -49,9 +66,9 @@ if check_password():
     with col_h1:
         date = st.date_input("報表日期", datetime.date.today())
     with col_h2:
-        department = st.selectbox("所屬部門", list(TARGETS.keys()))
+        department = st.selectbox("所屬部門", list(st.session_state.targets.keys()))
 
-    avg_hourly_rate = HOURLY_RATES[department]
+    avg_hourly_rate = st.session_state.hourly_rates[department]
     st.divider()
 
     # 2. 數據輸入區
@@ -67,7 +84,7 @@ if check_password():
         k_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
         f_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
 
-    # 邏輯計算
+    # 今日邏輯計算
     total_revenue = cash + credit_card + remittance
     total_hours = k_hours + f_hours
     productivity = total_revenue / total_hours if total_hours > 0 else 0
@@ -85,10 +102,11 @@ if check_password():
     with col_c1:
         tags = st.multiselect("客訴分類", ["餐點品質", "服務態度", "環境衛生", "上菜效率", "訂位系統", "其他"])
     with col_c2:
-        # 修改點：改為 text_area 支援自動換行
         reason_action = st.text_area("客訴原因與處理結果", height=60, placeholder="例如：招待肉盤乙份，客人表示理解")
 
-    # 4. 資料儲存按鈕
+    # 4. 資料儲存與月平均計算
+    monthly_productivity = 0.0
+    
     if st.button("確認提交報表至雲端", type="primary", use_container_width=True):
         client = get_gspread_client()
         if client:
@@ -97,6 +115,7 @@ if check_password():
                 tags_str = ", ".join(tags) if tags else "無"
                 new_row = [str(date), department, cash, credit_card, remittance, amount_note, total_revenue, total_customers, round(avg_spend, 1), k_hours, f_hours, total_hours, avg_hourly_rate, round(productivity, 1), f"{labor_cost_ratio:.1%}", ops_note, tags_str, reason_action, "已處理", announcement]
                 
+                # 更新或新增
                 all_data = sheet.get_all_values()
                 target_row = -1
                 for i, row in enumerate(all_data[1:], start=2):
@@ -111,15 +130,38 @@ if check_password():
                     sheet.append_row(new_row)
                     st.success("✅ 資料已新增至 Google Sheets")
                 st.balloons()
+                
             except Exception as e:
                 st.error(f"提交失敗：{e}")
 
+    # 計算月平均工時產值邏輯
+    client = get_gspread_client()
+    if client:
+        try:
+            sheet = client.open_by_key("16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08").sheet1
+            df = pd.DataFrame(sheet.get_all_records())
+            if not df.empty:
+                df['日期'] = pd.to_datetime(df['日期'])
+                # 篩選同部門、同月份的資料
+                current_month_df = df[(df['部門'] == department) & 
+                                      (df['日期'].dt.month == date.month) & 
+                                      (df['日期'].dt.year == date.year)]
+                
+                if not current_month_df.empty:
+                    # 計算累計營收 / 累計總工時
+                    m_revenue = current_month_df['總營收'].astype(float).sum()
+                    m_hours = current_month_df['總工時'].astype(float).sum()
+                    if m_hours > 0:
+                        monthly_productivity = m_revenue / m_hours
+        except:
+            pass # 避免初次使用或讀取失敗導致當機
+
     st.divider()
 
-    # 5. 分流回報區 (財務截圖 vs 營運複製)
+    # 5. 分流回報區
     if st.checkbox("開啟回報模式 (截圖/複製)"):
         
-        # --- 區塊一：財務專用截圖 ---
+        # --- 區塊一：財務專用截圖 (新增月平均工時產值) ---
         st.markdown("#### 今日營收截圖 (請傳至財務群)")
         st.markdown(f"""
         <div style="background-color: #ffffff; padding: 20px; border: 1px solid #000; color: #000000; font-family: sans-serif; width: 100%; max-width: 400px;">
@@ -132,8 +174,9 @@ if check_password():
                 <tr><td style="font-size: 0.85em; color: #666;"> - 現金</td><td style="text-align:right; font-size: 0.85em;">{cash:,}</td></tr>
                 <tr><td style="font-size: 0.85em; color: #666;"> - 刷卡</td><td style="text-align:right; font-size: 0.85em;">{credit_card:,}</td></tr>
                 <tr><td style="font-size: 0.85em; color: #666;"> - 匯款</td><td style="text-align:right; font-size: 0.85em;">{remittance:,}</td></tr>
-                <tr style="border-top: 1px solid #eee;"><td>工時產值</td><td style="text-align:right;">{int(productivity):,} 元/時</td></tr>
-                <tr><td>人事成本比</td><td style="text-align:right;">{labor_cost_ratio:.1%}</td></tr>
+                <tr style="border-top: 1px solid #eee;"><td>今日工時產值</td><td style="text-align:right;">{int(productivity):,} 元/時</td></tr>
+                <tr style="color: #d32f2f;"><td>月平均工時產值</td><td style="text-align:right;"><b>{int(monthly_productivity):,} 元/時</b></td></tr>
+                <tr style="border-top: 1px solid #eee;"><td>人事成本比</td><td style="text-align:right;">{labor_cost_ratio:.1%}</td></tr>
             </table>
             <div style="margin-top: 10px; font-size: 12px; background: #f5f5f5; padding: 5px;">
                 <b>備註：</b>{amount_note}
