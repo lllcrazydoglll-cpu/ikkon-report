@@ -37,27 +37,46 @@ def get_gspread_client():
 
 # --- 主程式執行 ---
 if check_password():
-    # 初始化經營參數 (若無設定則使用預設值)
-    if "targets" not in st.session_state:
-        st.session_state.targets = {"桃園鍋物": 2000000, "桃園燒肉": 2000000, "台中和牛會所": 2000000}
-    if "hourly_rates" not in st.session_state:
-        st.session_state.hourly_rates = {"桃園鍋物": 290, "桃園燒肉": 270, "台中和牛會所": 270}
-
     st.set_page_config(page_title="IKKON Management System", layout="wide")
+    client = get_gspread_client()
+    spreadsheet_key = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
+    
+    # 讀取雲端參數設定
+    if client:
+        try:
+            settings_sheet = client.open_by_key(spreadsheet_key).worksheet("Settings")
+            settings_df = pd.DataFrame(settings_sheet.get_all_records())
+            # 將 dataframe 轉換為字典方便調用
+            TARGETS = dict(zip(settings_df['部門'], settings_df['月目標']))
+            HOURLY_RATES = dict(zip(settings_df['部門'], settings_df['平均時薪']))
+        except Exception:
+            # 若讀取 Settings 失敗，使用預設值
+            TARGETS = {"桃園鍋物": 2000000, "桃園燒肉": 2000000, "台中和牛會所": 2000000}
+            HOURLY_RATES = {"桃園鍋物": 290, "桃園燒肉": 270, "台中和牛會所": 270}
 
     # --- 管理者後台 (側邊欄) ---
     with st.sidebar:
         st.title("管理者後台")
         admin_mode = st.checkbox("開啟參數編輯")
-        if admin_mode:
-            st.subheader("月目標設定")
-            for dept in st.session_state.targets.keys():
-                st.session_state.targets[dept] = st.number_input(f"{dept} 目標", value=st.session_state.targets[dept], step=100000)
+        if admin_mode and client:
+            st.subheader("同步雲端參數")
+            new_targets = {}
+            new_rates = {}
+            for dept in TARGETS.keys():
+                new_targets[dept] = st.number_input(f"{dept} 月目標", value=int(TARGETS[dept]), step=100000)
+                new_rates[dept] = st.number_input(f"{dept} 時薪", value=int(HOURLY_RATES[dept]), step=5)
             
-            st.subheader("平均時薪設定")
-            for dept in st.session_state.hourly_rates.keys():
-                st.session_state.hourly_rates[dept] = st.number_input(f"{dept} 時薪", value=st.session_state.hourly_rates[dept], step=5)
-            st.info("提示：此處修改僅影響本次作業，長期修改建議直接更動程式碼預設值。")
+            if st.button("永久儲存設定至雲端"):
+                try:
+                    # 準備寫回雲端的資料
+                    update_data = [["部門", "月目標", "平均時薪"]]
+                    for dept in TARGETS.keys():
+                        update_data.append([dept, new_targets[dept], new_rates[dept]])
+                    settings_sheet.update("A1", update_data)
+                    st.success("✅ 設定已永久儲存")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"儲存失敗：{e}")
 
     st.title("IKKON 營運數據")
 
@@ -66,9 +85,9 @@ if check_password():
     with col_h1:
         date = st.date_input("報表日期", datetime.date.today())
     with col_h2:
-        department = st.selectbox("所屬部門", list(st.session_state.targets.keys()))
+        department = st.selectbox("所屬部門", list(TARGETS.keys()))
 
-    avg_hourly_rate = st.session_state.hourly_rates[department]
+    avg_hourly_rate = HOURLY_RATES[department]
     st.divider()
 
     # 2. 數據輸入區
@@ -84,12 +103,11 @@ if check_password():
         k_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
         f_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
 
-    # 今日邏輯計算
+    # 邏輯計算
     total_revenue = cash + credit_card + remittance
     total_hours = k_hours + f_hours
     productivity = total_revenue / total_hours if total_hours > 0 else 0
     labor_cost_ratio = (total_hours * avg_hourly_rate) / total_revenue if total_revenue > 0 else 0
-    avg_spend = total_revenue / total_customers if total_customers > 0 else 0
 
     st.divider()
 
@@ -106,17 +124,14 @@ if check_password():
 
     # 4. 資料儲存與月平均計算
     monthly_productivity = 0.0
-    
     if st.button("確認提交報表至雲端", type="primary", use_container_width=True):
-        client = get_gspread_client()
         if client:
             try:
-                sheet = client.open_by_key("16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08").sheet1
+                main_sheet = client.open_by_key(spreadsheet_key).sheet1
                 tags_str = ", ".join(tags) if tags else "無"
-                new_row = [str(date), department, cash, credit_card, remittance, amount_note, total_revenue, total_customers, round(avg_spend, 1), k_hours, f_hours, total_hours, avg_hourly_rate, round(productivity, 1), f"{labor_cost_ratio:.1%}", ops_note, tags_str, reason_action, "已處理", announcement]
+                new_row = [str(date), department, cash, credit_card, remittance, amount_note, total_revenue, total_customers, 0, k_hours, f_hours, total_hours, avg_hourly_rate, round(productivity, 1), f"{labor_cost_ratio:.1%}", ops_note, tags_str, reason_action, "已處理", announcement]
                 
-                # 更新或新增
-                all_data = sheet.get_all_values()
+                all_data = main_sheet.get_all_values()
                 target_row = -1
                 for i, row in enumerate(all_data[1:], start=2):
                     if row[0] == str(date) and row[1] == department:
@@ -124,44 +139,32 @@ if check_password():
                         break
                 
                 if target_row != -1:
-                    sheet.update(f"A{target_row}:T{target_row}", [new_row])
-                    st.success("✅ 資料已同步至 Google Sheets")
+                    main_sheet.update(f"A{target_row}:T{target_row}", [new_row])
+                    st.success("✅ 資料已更新")
                 else:
-                    sheet.append_row(new_row)
-                    st.success("✅ 資料已新增至 Google Sheets")
+                    main_sheet.append_row(new_row)
+                    st.success("✅ 資料已新增")
                 st.balloons()
-                
             except Exception as e:
                 st.error(f"提交失敗：{e}")
 
-    # 計算月平均工時產值邏輯
-    client = get_gspread_client()
+    # 計算月平均工時產值
     if client:
         try:
-            sheet = client.open_by_key("16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08").sheet1
-            df = pd.DataFrame(sheet.get_all_records())
+            main_sheet = client.open_by_key(spreadsheet_key).sheet1
+            df = pd.DataFrame(main_sheet.get_all_records())
             if not df.empty:
                 df['日期'] = pd.to_datetime(df['日期'])
-                # 篩選同部門、同月份的資料
-                current_month_df = df[(df['部門'] == department) & 
-                                      (df['日期'].dt.month == date.month) & 
-                                      (df['日期'].dt.year == date.year)]
-                
-                if not current_month_df.empty:
-                    # 計算累計營收 / 累計總工時
-                    m_revenue = current_month_df['總營收'].astype(float).sum()
-                    m_hours = current_month_df['總工時'].astype(float).sum()
-                    if m_hours > 0:
-                        monthly_productivity = m_revenue / m_hours
+                month_df = df[(df['部門'] == department) & (df['日期'].dt.month == date.month) & (df['日期'].dt.year == date.year)]
+                if not month_df.empty:
+                    monthly_productivity = month_df['總營收'].astype(float).sum() / month_df['總工時'].astype(float).sum() if month_df['總工時'].astype(float).sum() > 0 else 0
         except:
-            pass # 避免初次使用或讀取失敗導致當機
+            pass
 
     st.divider()
 
     # 5. 分流回報區
     if st.checkbox("開啟回報模式 (截圖/複製)"):
-        
-        # --- 區塊一：財務專用截圖 (新增月平均工時產值) ---
         st.markdown("#### 今日營收截圖 (請傳至財務群)")
         st.markdown(f"""
         <div style="background-color: #ffffff; padding: 20px; border: 1px solid #000; color: #000000; font-family: sans-serif; width: 100%; max-width: 400px;">
@@ -185,22 +188,7 @@ if check_password():
         """, unsafe_allow_html=True)
 
         st.write("") 
-
-        # --- 區塊二：營運部文字複製 ---
         st.markdown("#### 今日營運狀況複製區 (請傳至公司群組)")
-        
-        ops_report_for_line = f"""【IKKON 營運回報 - {date}】
-部門：{department}
-------------------------
-營運回報：
-{ops_note if ops_note else "無特別狀況"}
-
-事項宣達：
-{announcement if announcement else "無"}
-
-客訴處理 ({", ".join(tags) if tags else "無"})：
-{reason_action if reason_action else "無"}
-------------------------
-"""
+        ops_report_for_line = f"""【IKKON 營運回報 - {date}】\n部門：{department}\n------------------------\n營運回報：\n{ops_note if ops_note else "無特別狀況"}\n\n事項宣達：\n{announcement if announcement else "無"}\n\n客訴處理 ({", ".join(tags) if tags else "無"})：\n{reason_action if reason_action else "無"}\n------------------------"""
         st.code(ops_report_for_line, language="text")
         st.caption("※點擊上方灰色框框右上角的圖示即可「一鍵複製」，再到 LINE 貼上。")
