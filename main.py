@@ -8,7 +8,7 @@ import pandas as pd
 def check_password():
     def password_entered():
         pwd = st.session_state["password_input"]
-        if pwd == "ikkonadmin":
+        if pwd == "IKKONADMIN":
             st.session_state["password_correct"] = True
             st.session_state["user_role"] = "admin"
             del st.session_state["password_input"]
@@ -180,3 +180,4 @@ if check_password():
         st.markdown("#### 營運狀況複製區")
         ops_report = f"【IKKON 營運回報 - {date}】\n部門：{department}\n營運回報：{ops_note}\n事項宣達：{announcement}"
         st.code(ops_report, language="text")
+
