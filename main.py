@@ -19,40 +19,36 @@ def get_gspread_client():
         st.error(f"雲端連線失敗：{e}")
         return None
 
-# --- 檔案 ID 配置 (已更換為您提供的網址 ID) ---
-KEYS = {
-    "REPORT": "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08",  # IKKON_Daily_Report 
-    "USERS": "1o42MwMubvNuaAtNzmtHXix_O2-3BC1CR5fGRBlp26tQ",   # Users 
-    "SETTINGS": "1b0Gn4b_7lYJSDcAMO8kUNFDjhy4g34xijzLudrayPWQ" # Settings 
-}
+# 統一使用您「三個分頁都在一起」的這個檔案 ID
+SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
-# 載入雲端配置
-def load_configs(client):
+# 載入所有配置
+def load_all_data(client):
     try:
-        # 讀取 Users 檔案的第一個工作表 
-        user_df = pd.DataFrame(client.open_by_key(KEYS["USERS"]).sheet1.get_all_records())
-        # 讀取 Settings 檔案的第一個工作表 
-        settings_df = pd.DataFrame(client.open_by_key(KEYS["SETTINGS"]).sheet1.get_all_records())
-        return user_df, settings_df
+        sh = client.open_by_key(SID)
+        # 讀取三個分頁
+        user_df = pd.DataFrame(sh.worksheet("Users").get_all_records())
+        settings_df = pd.DataFrame(sh.worksheet("Settings").get_all_records())
+        report_sheet = sh.worksheet("Sheet1")
+        return user_df, settings_df, report_sheet
     except Exception as e:
-        st.error(f"讀取設定檔失敗，請確認 GCP 帳號是否有權限存取新資料夾。錯誤：{e}")
-        return pd.DataFrame(), pd.DataFrame()
+        st.error(f"讀取分頁失敗，請確保分頁名稱為 Sheet1, Settings, Users。錯誤：{e}")
+        return None, None, None
 
 # 登入介面
 def login_ui(user_df):
     if st.session_state.get("logged_in"):
         return True
 
-    st.title("IKKON 系統登入")
+    st.title("IKKON 系統管理登入")
     with st.form("login_form"):
         input_user = st.text_input("帳號名稱")
         input_pwd = st.text_input("密碼", type="password")
         submit = st.form_submit_button("登入")
         
         if submit:
-            if not user_df.empty:
+            if user_df is not None and not user_df.empty:
                 user_df['密碼'] = user_df['密碼'].astype(str)
-                # 根據 Users 內容比對 
                 match = user_df[(user_df['帳號名稱'] == input_user) & (user_df['密碼'] == input_pwd)]
                 if not match.empty:
                     user_info = match.iloc[0]
@@ -66,31 +62,100 @@ def login_ui(user_df):
             st.error("帳號或密碼錯誤")
     return False
 
-# --- 主程式 ---
+# --- 主程式執行區 ---
 client = get_gspread_client()
 
 if client:
-    user_df, settings_df = load_configs(client)
+    user_df, settings_df, report_sheet = load_all_data(client)
     
     if login_ui(user_df):
-        # 初始化營運參數 
-        if not settings_df.empty:
-            TARGETS = dict(zip(settings_df['部門'], settings_df['月目標']))
-            HOURLY_RATES = dict(zip(settings_df['部門'], settings_df['平均時薪']))
-        else:
-            st.error("無法載入營運參數。")
-            st.stop()
+        # 初始化參數
+        TARGETS = dict(zip(settings_df['部門'], settings_df['月目標']))
+        HOURLY_RATES = dict(zip(settings_df['部門'], settings_df['平均時薪']))
 
         with st.sidebar:
-            st.title(f"您好, {st.session_state['user_name']}")
+            st.title(f"您好，{st.session_state['user_name']}")
             mode = st.radio("功能選單", ["數據錄入", "月度損益彙總", "後台參數設定"])
-            if st.button("登出"):
+            if st.button("安全登出"):
                 st.session_state.clear()
                 st.rerun()
 
-        # 1. 數據錄入
+        # 1. 數據錄入功能
         if mode == "數據錄入":
             st.title("IKKON 營運數據錄入")
-            dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
+            
+            # 根據權限決定部門選單
+            if st.session_state['dept_access'] == "ALL":
+                dept_options = list(TARGETS.keys())
+            else:
+                dept_options = [st.session_state['dept_access']]
+            
             department = st.selectbox("所屬部門", dept_options)
-            # ... (其餘錄入邏輯保持不變，提交時使用 KEYS["REPORT"])
+            date = st.date_input("報表日期", datetime.date.today())
+            
+            avg_rate = HOURLY_RATES.get(department, 205)
+            
+            st.subheader("財務與工時錄入")
+            col1, col2 = st.columns(2)
+            with col1:
+                cash = st.number_input("現金收入", min_value=0, step=100)
+                card = st.number_input("刷卡收入", min_value=0, step=100)
+                remit = st.number_input("匯款收入", min_value=0, step=100)
+            with col2:
+                customers = st.number_input("總來客數", min_value=1, step=1)
+                k_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
+                f_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
+            
+            memo = st.text_area("備註", "無")
+            
+            # 計算數據
+            total_rev = cash + card + remit
+            total_hrs = k_hours + f_hours
+            productivity = total_rev / total_hrs if total_hrs > 0 else 0
+            labor_ratio = (total_hrs * avg_rate) / total_rev if total_rev > 0 else 0
+            
+            if st.button("提交今日報表", type="primary", use_container_width=True):
+                new_row = [
+                    str(date), department, cash, card, remit, memo, 
+                    total_rev, customers, total_rev/customers if customers > 0 else 0,
+                    k_hours, f_hours, total_hrs, avg_rate, productivity, labor_ratio
+                ]
+                report_sheet.append_row(new_row)
+                st.success(f"{department} {date} 數據已成功存入雲端！")
+
+        # 2. 月度損益彙總 (執行長 admin 專屬)
+        elif mode == "月度損益彙總":
+            if st.session_state['user_role'] != 'admin':
+                st.warning("權限不足：僅限執行長或管理員查看。")
+            else:
+                st.title("📊 月度財務彙總分析")
+                raw_df = pd.DataFrame(report_sheet.get_all_records())
+                if not raw_df.empty:
+                    raw_df['日期'] = pd.to_datetime(raw_df['日期'])
+                    month_list = raw_df['日期'].dt.strftime('%Y-%m').unique()
+                    target_month = st.selectbox("選擇月份", month_list)
+                    
+                    filtered_df = raw_df[raw_df['日期'].dt.strftime('%Y-%m') == target_month]
+                    
+                    m_rev = filtered_df['總營收'].sum()
+                    m_hrs = filtered_df['總工時'].sum()
+                    m_cost = (filtered_df['總工時'] * filtered_df['平均時薪']).sum()
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("當月總營收", f"${m_rev:,.0f}")
+                    c2.metric("預估人事支出", f"${m_cost:,.0f}")
+                    c3.metric("工時產值", f"${m_rev/m_hrs:,.0f}/hr" if m_hrs > 0 else "0")
+                    
+                    st.bar_chart(filtered_df.groupby('部門')['總營收'].sum())
+                else:
+                    st.info("目前尚無數據。")
+
+        # 3. 後台參數設定
+        elif mode == "後台參數設定":
+            if st.session_state['user_role'] != 'admin':
+                st.warning("權限不足。")
+            else:
+                st.title("⚙️ 營運參數設定")
+                st.write("目前系統連結之雲端 ID:", SID)
+                st.dataframe(settings_df)
+                st.info("如需修改月目標或時薪，請直接開啟 Google Sheets 的『Settings』分頁修改。")
