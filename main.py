@@ -3,11 +3,11 @@ import gspread
 from google.oauth2.service_account import Credentials
 import datetime
 import pandas as pd
+import altair as alt
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
 # 定義欄位結構 (共 30 欄)
-# 🚨 必須確保 Google Sheets 的標題列與此「完全一致」，尤其是「現金折價卷」的位置
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
@@ -95,13 +95,11 @@ if login_ui(user_df):
         avg_rate = HOURLY_RATES.get(department, 205)
         month_target = TARGETS.get(department, 1000000)
         
-        # --- 自動抓取前一日零用金邏輯 ---
         last_petty_cash = 0
         if report_data:
             df_history = pd.DataFrame(report_data)
             if not df_history.empty and '今日剰' in df_history.columns:
                 df_history['日期'] = pd.to_datetime(df_history['日期'])
-                # 排除當前選定日期的資料，確保抓到的是「歷史」最後一筆
                 past_history = df_history[(df_history['部門'] == department) & (df_history['日期'] < pd.to_datetime(date))]
                 past_history = past_history.sort_values(by='日期', ascending=False)
                 if not past_history.empty:
@@ -109,18 +107,22 @@ if login_ui(user_df):
                     if pd.notna(last_value) and str(last_value).strip() != "":
                         last_petty_cash = int(float(last_value))
 
-        # --- 第一區塊：營收與工時輸入 ---
-        st.subheader("營收與客數")
-        c1, c2, c3 = st.columns(3)
+        st.subheader("營收數據")
+        c1, c2, c3, c4 = st.columns(4)
         with c1:
             cash = st.number_input("現金收入", min_value=0, step=100)
-            card = st.number_input("刷卡收入", min_value=0, step=100)
         with c2:
-            remit = st.number_input("匯款收入", min_value=0, step=100)
-            cash_coupon = st.number_input("現金折價卷", min_value=0, step=100)
+            card = st.number_input("刷卡收入", min_value=0, step=100)
         with c3:
+            remit = st.number_input("匯款收入", min_value=0, step=100)
+        with c4:
+            cash_coupon = st.number_input("現金折價卷", min_value=0, step=100)
+            
+        c_cust, c_memo = st.columns([1, 3])
+        with c_cust:
             customers = st.number_input("總來客數", min_value=1, step=1)
-            rev_memo = st.text_input("金額備註", "無")
+        with c_memo:
+            rev_memo = st.text_area("金額備註", "無", height=68)
 
         st.subheader("工時數據")
         t1, t2 = st.columns(2)
@@ -129,11 +131,9 @@ if login_ui(user_df):
         with t2:
             f_hours = st.number_input("外場工時", min_value=0.0, step=0.5)
 
-        # --- 第二區塊：零用金與折抵券輸入 ---
         st.subheader("零用金回報")
         p1, p2, p3 = st.columns(3)
         with p1:
-            # 依據權限決定是否鎖定輸入框
             petty_yesterday = st.number_input(
                 "昨日剩 (系統自動帶入)" if not is_admin else "昨日剩 (管理員解鎖模式)", 
                 value=last_petty_cash, 
@@ -157,19 +157,17 @@ if login_ui(user_df):
         
         total_coupon = cash_coupon + ikkon_coupon + thousand_coupon
 
-        # --- 第三區塊：文字回報 ---
         st.subheader("營運與客訴回報")
-        ops_note = st.text_area("營運狀況回報", height=100)
-        announcement = st.text_area("事項宣達", height=60)
+        ops_note = st.text_area("營運狀況回報", height=120)
+        announcement = st.text_area("事項宣達", height=80)
         
         col_c1, col_c2 = st.columns([1, 2])
         with col_c1:
             tags = st.multiselect("客訴分類", ["餐點品質", "服務態度", "環境衛生", "上菜效率", "訂位系統", "其他"])
             tags_str = ", ".join(tags) if tags else "無"
         with col_c2:
-            reason_action = st.text_area("原因與處理結果", height=60)
+            reason_action = st.text_area("原因與處理結果", height=80)
 
-        # --- 核心邏輯計算 ---
         total_rev = float(cash + card + remit)
         total_hrs = float(k_hours + f_hours)
         productivity = float(total_rev / total_hrs) if total_hrs > 0 else 0.0
@@ -182,14 +180,12 @@ if login_ui(user_df):
             if not raw_df.empty:
                 raw_df['日期'] = pd.to_datetime(raw_df['日期'])
                 current_month_str = date.strftime('%Y-%m')
-                # 計算當月歷史營收（排除今天，以免重複加總）
                 mask = (raw_df['部門'] == department) & (raw_df['日期'].dt.strftime('%Y-%m') == current_month_str) & (raw_df['日期'] < pd.to_datetime(date))
                 historical_month_rev = float(pd.to_numeric(raw_df.loc[mask, '總營業額'], errors='coerce').fillna(0).sum())
                 current_month_rev += historical_month_rev
         
         target_ratio = float(current_month_rev / month_target) if month_target > 0 else 0.0
 
-        # --- 提交與覆蓋邏輯 ---
         if st.button("提交報表", type="primary", use_container_width=True):
             sheet = get_report_sheet()
             
@@ -205,18 +201,16 @@ if login_ui(user_df):
                 ops_note, tags_str, reason_action, "已提交", announcement
             ]
             
-            # 尋找是否已有同日同部門的資料
             all_values = sheet.get_all_values()
             target_row_idx = None
             
             for i, row in enumerate(all_values):
-                if i == 0: continue # 跳過標題列
+                if i == 0: continue
                 if len(row) >= 2 and row[0] == str(date) and row[1] == department:
-                    target_row_idx = i + 1 # gspread 行數從 1 開始計算
+                    target_row_idx = i + 1
                     break
             
             if target_row_idx:
-                # 若存在，執行覆蓋更新 (使用 update_cells 確保相容性)
                 cell_list = sheet.range(f"A{target_row_idx}:AD{target_row_idx}")
                 for j, cell in enumerate(cell_list):
                     if j < len(new_row):
@@ -224,13 +218,11 @@ if login_ui(user_df):
                 sheet.update_cells(cell_list)
                 st.success(f"{date} {department} 的營運報表已成功更新。")
             else:
-                # 若不存在，新增至最後一行
                 sheet.append_row(new_row)
                 st.success(f"{date} {department} 的營運報表已成功新增。")
                 
             st.cache_data.clear()
             
-            # --- 專業版精簡截圖區 ---
             st.divider()
             st.markdown(f"### 【營運日報】 {date} | {department}")
             
@@ -278,22 +270,69 @@ if login_ui(user_df):
             
             month_list = sorted(raw_df['日期'].dt.strftime('%Y-%m').unique(), reverse=True)
             target_month = st.selectbox("選擇月份", month_list)
-            filtered_df = raw_df[raw_df['日期'].dt.strftime('%Y-%m') == target_month].copy()
             
-            for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款']:
+            # 過濾出選擇月份的資料，並依據日期排序以確保圖表時序正確
+            filtered_df = raw_df[raw_df['日期'].dt.strftime('%Y-%m') == target_month].copy()
+            filtered_df = filtered_df.sort_values(by='日期')
+            
+            # 將需要計算及繪圖的欄位轉換為數值
+            for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款', '工時產值']:
                 filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
             
             m_rev = filtered_df['總營業額'].sum()
             m_hrs = filtered_df['總工時'].sum()
             m_cost = (filtered_df['總工時'] * filtered_df['平均時薪']).sum()
             
+            st.divider()
             c1, c2, c3 = st.columns(3)
             c1.metric("當月總營收", f"${m_rev:,.0f}")
             c2.metric("預估人事支出", f"${m_cost:,.0f}")
             c3.metric("平均工時產值", f"${m_rev/m_hrs:,.0f}/hr" if m_hrs > 0 else "0")
             
+            # --- 視覺化圖表區塊 ---
+            st.subheader("趨勢與結構分析")
+            
+            # 準備繪圖所需資料格式 (新增短日期字串供 X 軸顯示)
+            chart_df = filtered_df.copy()
+            chart_df['日期標籤'] = chart_df['日期'].dt.strftime('%m-%d')
+            
+            tab1, tab2, tab3 = st.tabs(["每日營收趨勢", "支付結構分析", "工時產值監控"])
+            
+            with tab1:
+                st.caption("透過每日營收起伏，檢視平假日業績落差與行銷活動成效。")
+                bar_chart = alt.Chart(chart_df).mark_bar(color='#2E86AB').encode(
+                    x=alt.X('日期標籤:N', title='日期', sort=None),
+                    y=alt.Y('總營業額:Q', title='營業額 ($)'),
+                    tooltip=['日期標籤', '總營業額', '總來客數']
+                ).properties(height=350)
+                st.altair_chart(bar_chart, use_container_width=True)
+                
+            with tab2:
+                st.caption("分析消費者支付習慣，作為現金流調度與手續費談判的依據。")
+                # 將現金、刷卡、匯款由寬表轉為長表(Melt)，以符合 Altair 的堆疊圖表格式
+                melted_df = chart_df.melt(id_vars=['日期標籤'], value_vars=['現金', '刷卡', '匯款'], 
+                                          var_name='支付方式', value_name='金額')
+                stack_chart = alt.Chart(melted_df).mark_bar().encode(
+                    x=alt.X('日期標籤:N', title='日期', sort=None),
+                    y=alt.Y('金額:Q', title='金額 ($)'),
+                    color=alt.Color('支付方式:N', scale=alt.Scale(scheme='set2')),
+                    tooltip=['日期標籤', '支付方式', '金額']
+                ).properties(height=350)
+                st.altair_chart(stack_chart, use_container_width=True)
+                
+            with tab3:
+                st.caption("觀察工時產值折線。數字過低代表人力閒置，過高代表現場過勞且可能犧牲服務品質。")
+                line_chart = alt.Chart(chart_df).mark_line(point=True, color='#D64933').encode(
+                    x=alt.X('日期標籤:N', title='日期', sort=None),
+                    y=alt.Y('工時產值:Q', title='產值 ($/hr)'),
+                    tooltip=['日期標籤', '工時產值', '總工時']
+                ).properties(height=350)
+                st.altair_chart(line_chart, use_container_width=True)
+
+            # --- 原始明細數據 ---
+            st.divider()
             st.subheader("當月明細數據")
             display_cols = ['日期', '部門', '現金', '刷卡', '匯款', '總營業額', '金額備註', '營運回報', '客訴分類標籤']
-            st.dataframe(filtered_df[display_cols], use_container_width=True)
+            st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
