@@ -6,7 +6,7 @@ import pandas as pd
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
-# 重新定義欄位結構 (共 30 欄)，請務必確保 Google Sheets 的標題列與此一致
+# 定義欄位結構 (共 30 欄)，確保 Google Sheets 的標題列與此完全一致
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
@@ -90,8 +90,22 @@ if login_ui(user_df):
         department = st.selectbox("部門", dept_options)
         date = st.date_input("報表日期", datetime.date.today())
         avg_rate = HOURLY_RATES.get(department, 205)
-        month_target = TARGETS.get(department, 1000000) # 預設目標，可由 settings_df 取得
+        month_target = TARGETS.get(department, 1000000)
         
+        # --- 自動抓取前一日零用金邏輯 ---
+        last_petty_cash = 0
+        if report_data:
+            df_history = pd.DataFrame(report_data)
+            if not df_history.empty and '今日剰' in df_history.columns:
+                df_history['日期'] = pd.to_datetime(df_history['日期'])
+                # 篩選該部門歷史資料，並依日期降冪排序
+                dept_history = df_history[df_history['部門'] == department].sort_values(by='日期', ascending=False)
+                if not dept_history.empty:
+                    # 取得最近一筆的今日剰
+                    last_value = dept_history.iloc[0]['今日剰']
+                    if pd.notna(last_value) and str(last_value).strip() != "":
+                        last_petty_cash = int(float(last_value))
+
         # --- 第一區塊：營收與工時輸入 ---
         st.subheader("營收與客數")
         c1, c2, c3 = st.columns(3)
@@ -116,13 +130,13 @@ if login_ui(user_df):
         st.subheader("零用金回報")
         p1, p2, p3 = st.columns(3)
         with p1:
-            petty_yesterday = st.number_input("昨日剩", value=0, step=100)
+            # 強制帶入前一日數據，並設為不可修改
+            petty_yesterday = st.number_input("昨日剩 (系統自動帶入)", value=last_petty_cash, step=100, disabled=True)
         with p2:
             petty_expense = st.number_input("今日支出", min_value=0, step=100)
         with p3:
             petty_replenish = st.number_input("今日補", min_value=0, step=100)
         
-        # 自動計算今日剩餘零用金
         petty_today = petty_yesterday - petty_expense + petty_replenish
         st.info(f"今日剰 (自動計算)：${petty_today:,}")
 
@@ -133,7 +147,6 @@ if login_ui(user_df):
         with v2:
             thousand_coupon = st.number_input("1000折價券金額", min_value=0, step=1000)
         
-        # 自動計算總折抵金
         total_coupon = cash_coupon + ikkon_coupon + thousand_coupon
 
         # --- 第三區塊：文字回報 ---
@@ -148,36 +161,39 @@ if login_ui(user_df):
         with col_c2:
             reason_action = st.text_area("原因與處理結果", height=60)
 
-        # --- 核心邏輯計算 ---
-        total_rev = cash + card + remit
-        total_hrs = k_hours + f_hours
-        productivity = total_rev / total_hrs if total_hrs > 0 else 0
-        labor_ratio = (total_hrs * avg_rate) / total_rev if total_rev > 0 else 0
-        avg_customer_spend = total_rev / customers if customers > 0 else 0
+        # --- 核心邏輯計算 (已加入強制型態轉換防護) ---
+        total_rev = float(cash + card + remit)
+        total_hrs = float(k_hours + f_hours)
+        productivity = float(total_rev / total_hrs) if total_hrs > 0 else 0.0
+        labor_ratio = float((total_hrs * avg_rate) / total_rev) if total_rev > 0 else 0.0
+        avg_customer_spend = float(total_rev / customers) if customers > 0 else 0.0
 
-        # 計算月營業額與目標佔比 (撈取歷史資料 + 本日營收)
         current_month_rev = total_rev
         if report_data:
             raw_df = pd.DataFrame(report_data)
             if not raw_df.empty:
                 raw_df['日期'] = pd.to_datetime(raw_df['日期'])
                 current_month_str = date.strftime('%Y-%m')
-                # 篩選同部門且同月份的歷史營收
                 mask = (raw_df['部門'] == department) & (raw_df['日期'].dt.strftime('%Y-%m') == current_month_str)
-                historical_month_rev = pd.to_numeric(raw_df.loc[mask, '總營業額'], errors='coerce').fillna(0).sum()
+                historical_month_rev = float(pd.to_numeric(raw_df.loc[mask, '總營業額'], errors='coerce').fillna(0).sum())
                 current_month_rev += historical_month_rev
         
-        target_ratio = (current_month_rev / month_target) if month_target > 0 else 0
+        target_ratio = float(current_month_rev / month_target) if month_target > 0 else 0.0
 
         # --- 提交與截圖區 ---
         if st.button("提交報表", type="primary", use_container_width=True):
             sheet = get_report_sheet()
+            
+            # 確保寫入前皆為基礎資料型態，避免 JSON 報錯
             new_row = [
-                str(date), department, cash, card, remit, cash_coupon, rev_memo,
-                total_rev, current_month_rev, f"{target_ratio*100:.1f}%", customers, avg_customer_spend,
-                k_hours, f_hours, total_hrs, avg_rate, productivity, f"{labor_ratio*100:.1f}%",
-                petty_yesterday, petty_expense, petty_replenish, petty_today,
-                ikkon_coupon, thousand_coupon, total_coupon,
+                str(date), department, 
+                int(cash), int(card), int(remit), int(cash_coupon), rev_memo,
+                int(total_rev), int(current_month_rev), f"{target_ratio*100:.1f}%", 
+                int(customers), int(avg_customer_spend),
+                float(k_hours), float(f_hours), float(total_hrs), 
+                int(avg_rate), int(productivity), f"{labor_ratio*100:.1f}%",
+                int(petty_yesterday), int(petty_expense), int(petty_replenish), int(petty_today),
+                int(ikkon_coupon), int(thousand_coupon), int(total_coupon),
                 ops_note, tags_str, reason_action, "已提交", announcement
             ]
             sheet.append_row(new_row)
@@ -185,25 +201,24 @@ if login_ui(user_df):
             
             # --- 專業版精簡截圖區 ---
             st.divider()
-            st.markdown(f"### 【IKKON 營運日報】 {date} | {department}")
+            st.markdown(f"### 【營運日報】 {date} | {department}")
             
-            # 使用 Markdown 表格呈現高密度專業排版
             report_md = f"""
 | 營收指標 | 金額/數據 | 營運指標 | 數據 |
 | :--- | :--- | :--- | :--- |
-| **總營業額** | **${total_rev:,.0f}** | **總來客數** | {customers} 人 |
-| 現金 | ${cash:,.0f} | 客單價 | ${avg_customer_spend:,.0f} |
-| 刷卡 | ${card:,.0f} | 工時產值 | ${productivity:,.0f}/hr |
-| 匯款 | ${remit:,.0f} | 人事占比 | {labor_ratio*100:.1f}% |
-| 現金折價卷 | ${cash_coupon:,.0f} | 內/外場工時 | {k_hours} / {f_hours} hr |
-| **月營業額** | **${current_month_rev:,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
+| **總營業額** | **${int(total_rev):,.0f}** | **總來客數** | {int(customers)} 人 |
+| 現金 | ${int(cash):,.0f} | 客單價 | ${int(avg_customer_spend):,.0f} |
+| 刷卡 | ${int(card):,.0f} | 工時產值 | ${int(productivity):,.0f}/hr |
+| 匯款 | ${int(remit):,.0f} | 人事占比 | {labor_ratio*100:.1f}% |
+| 現金折價卷 | ${int(cash_coupon):,.0f} | 內/外場工時 | {k_hours} / {f_hours} hr |
+| **月營業額** | **${int(current_month_rev):,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
 
 | 零用金管理 | 金額 | 折抵券結算 | 金額 |
 | :--- | :--- | :--- | :--- |
-| 昨日剩 | ${petty_yesterday:,.0f} | IKKON折抵券 | ${ikkon_coupon:,.0f} |
-| 今日支出 | ${petty_expense:,.0f} | 1000折價券 | ${thousand_coupon:,.0f} |
-| 今日補 | ${petty_replenish:,.0f} | | |
-| **今日剰** | **${petty_today:,.0f}** | **總共折抵金** | **${total_coupon:,.0f}** |
+| 昨日剩 | ${int(petty_yesterday):,.0f} | IKKON折抵券 | ${int(ikkon_coupon):,.0f} |
+| 今日支出 | ${int(petty_expense):,.0f} | 1000折價券 | ${int(thousand_coupon):,.0f} |
+| 今日補 | ${int(petty_replenish):,.0f} | | |
+| **今日剰** | **${int(petty_today):,.0f}** | **總共折抵金** | **${int(total_coupon):,.0f}** |
 """
             st.markdown(report_md)
             if rev_memo != "無":
@@ -211,7 +226,6 @@ if login_ui(user_df):
             
             st.divider()
 
-            # 文字複製區
             st.subheader("系統文字彙整 (請直接複製)")
             text_summary = f"""【營運回報】
 {ops_note}
@@ -224,6 +238,31 @@ if login_ui(user_df):
             st.code(text_summary, language="text")
 
     elif mode == "月度損益彙總":
-        # ... (保留原有的月度彙總程式碼，此處略過未修改部分以節省篇幅) ...
         st.title("月度財務彙總分析")
-        st.info("此區塊保持原樣，待後續需要擴充時再行處理。")
+        raw_df = pd.DataFrame(report_data)
+        if not raw_df.empty:
+            raw_df['日期'] = pd.to_datetime(raw_df['日期'])
+            if st.session_state['dept_access'] != "ALL":
+                raw_df = raw_df[raw_df['部門'] == st.session_state['dept_access']]
+            
+            month_list = sorted(raw_df['日期'].dt.strftime('%Y-%m').unique(), reverse=True)
+            target_month = st.selectbox("選擇月份", month_list)
+            filtered_df = raw_df[raw_df['日期'].dt.strftime('%Y-%m') == target_month].copy()
+            
+            for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款']:
+                filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
+            
+            m_rev = filtered_df['總營業額'].sum()
+            m_hrs = filtered_df['總工時'].sum()
+            m_cost = (filtered_df['總工時'] * filtered_df['平均時薪']).sum()
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("當月總營收", f"${m_rev:,.0f}")
+            c2.metric("預估人事支出", f"${m_cost:,.0f}")
+            c3.metric("平均工時產值", f"${m_rev/m_hrs:,.0f}/hr" if m_hrs > 0 else "0")
+            
+            st.subheader("當月明細數據")
+            display_cols = ['日期', '部門', '現金', '刷卡', '匯款', '總營業額', '金額備註', '營運回報', '客訴分類標籤']
+            st.dataframe(filtered_df[display_cols], use_container_width=True)
+        else:
+            st.info("尚未有數據。")
