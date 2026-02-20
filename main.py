@@ -18,9 +18,6 @@ SHEET_COLUMNS = [
 
 SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
-# ==========================================
-# 系統架構：資料層 (Data Layer)
-# ==========================================
 class DatabaseManager:
     def __init__(self, sid, secrets):
         self.sid = sid
@@ -78,13 +75,11 @@ class DatabaseManager:
             return False, str(e)
 
     def update_backend_sheet(self, sheet_name, df):
-        """將修改後的 DataFrame 完整覆寫回 Google Sheets"""
         if not self.client: return False, "連線失敗"
         try:
             sh = self.client.open_by_key(self.sid)
             sheet = sh.worksheet(sheet_name)
             sheet.clear()
-            # 填補空缺值避免 JSON 序列化報錯
             df_cleaned = df.fillna("")
             data = [df_cleaned.columns.tolist()] + df_cleaned.values.tolist()
             sheet.update(values=data, range_name="A1")
@@ -100,9 +95,6 @@ def load_cached_data():
 
 user_df, settings_df, report_data = load_cached_data()
 
-# ==========================================
-# 系統架構：介面與邏輯層 (UI & Business Logic Layer)
-# ==========================================
 def login_ui(user_df):
     if st.session_state.get("logged_in"): return True
     st.title("IKKON 系統管理登入")
@@ -133,8 +125,7 @@ if login_ui(user_df):
         st.title(f"{st.session_state['user_name']}")
         st.caption(f"權限等級：{st.session_state['user_role'].upper()}")
         
-        # 依據權限動態生成選單
-        menu_options = ["數據登記", "月度損益彙總"]
+        menu_options = ["數據錄入", "月度損益彙總"]
         if is_admin:
             menu_options.append("系統後台管理")
             
@@ -176,8 +167,8 @@ if login_ui(user_df):
                 else:
                     st.error(f"寫入失敗：{msg}")
 
-    elif mode == "數據登記":
-        st.title("營運數據登記")
+    elif mode == "數據錄入":
+        st.title("營運數據錄入")
         dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
         department = st.selectbox("部門", dept_options)
         date = st.date_input("報表日期", datetime.date.today())
@@ -196,7 +187,7 @@ if login_ui(user_df):
                     if pd.notna(last_value) and str(last_value).strip() != "":
                         last_petty_cash = int(float(last_value))
 
-        st.subheader("營運數據")
+        st.subheader("營收數據")
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             cash = st.number_input("現金收入", min_value=0, step=100)
@@ -308,7 +299,7 @@ if login_ui(user_df):
 | 刷卡 | ${int(card):,.0f} | 工時產值 | ${int(productivity):,.0f}/hr |
 | 匯款 | ${int(remit):,.0f} | 人事占比 | {labor_ratio*100:.1f}% |
 | 現金折價卷 | ${int(cash_coupon):,.0f} | 內/外場工時 | {k_hours} / {f_hours} hr |
-| **距離目標** | **${int(month_target - current_month_rev):,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
+| **月營收 / 距離目標** | **${int(current_month_rev):,.0f} / ${int(month_target - current_month_rev):,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
 
 | 零用金管理 | 金額 | 折抵券結算 | 金額 |
 | :--- | :--- | :--- | :--- |
@@ -324,15 +315,21 @@ if login_ui(user_df):
 
             st.subheader("系統文字彙整")
             
-            st.markdown("##### 📝 預覽區 (同仁確認用，已自動換行)")
+            st.markdown("##### 預覽區 (同仁確認用，已自動換行)")
             st.info(f"**【營運回報】**\n\n{ops_note.strip()}\n\n---\n\n**【事項宣達】**\n\n{announcement.strip()}\n\n---\n\n**【客訴處理】** ({tags_str})\n\n{reason_action.strip()}")
             
-            st.markdown("##### 📋 一鍵複製區 (點擊右上角按鈕)")
+            st.markdown("##### 一鍵複製區 (點擊右上角按鈕)")
             text_summary = f"【營運回報】\n{ops_note.strip()}\n\n【事項宣達】\n{announcement.strip()}\n\n【客訴處理】({tags_str})\n{reason_action.strip()}"
             st.code(text_summary, language="text")
 
     elif mode == "月度損益彙總":
         st.title("月度財務彙總分析")
+        
+        if st.session_state['dept_access'] == "ALL":
+            view_mode = st.radio("檢視模式", ["分店比較", "綜合彙總"], horizontal=True)
+        else:
+            view_mode = "綜合彙總"
+            
         raw_df = pd.DataFrame(report_data)
         if not raw_df.empty:
             raw_df['日期'] = pd.to_datetime(raw_df['日期'])
@@ -345,7 +342,7 @@ if login_ui(user_df):
             filtered_df = raw_df[raw_df['日期'].dt.strftime('%Y-%m') == target_month].copy()
             filtered_df = filtered_df.sort_values(by='日期')
             
-            for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款', '工時產值', '客單價']:
+            for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款', '工時產值', '客單價', '總來客數']:
                 filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
             
             if '人事成本占比' in filtered_df.columns:
@@ -368,45 +365,96 @@ if login_ui(user_df):
             
             tab1, tab2, tab3, tab4 = st.tabs(["每日營收趨勢", "客單價趨勢", "工時產值監控", "人事成本佔比趨勢"])
             
-            with tab1:
-                st.caption("透過每日營收起伏，檢視平假日業績落差與行銷活動成效。")
-                bar_chart = alt.Chart(chart_df).mark_bar(color='#2E86AB').encode(
-                    x=alt.X('日期標籤:N', title='日期', sort=None),
-                    y=alt.Y('總營業額:Q', title='營業額 ($)'),
-                    tooltip=['日期標籤', '總營業額', '總來客數']
-                ).properties(height=350)
-                st.altair_chart(bar_chart, use_container_width=True)
+            if view_mode == "分店比較":
+                with tab1:
+                    st.caption("透過分店每日營收起伏，檢視各店平假日業績落差與行銷活動成效。")
+                    bar_chart = alt.Chart(chart_df).mark_bar().encode(
+                        x=alt.X('日期標籤:N', title='日期'),
+                        y=alt.Y('總營業額:Q', title='營業額 ($)'),
+                        color=alt.Color('部門:N', title='分店'),
+                        xOffset='部門:N',
+                        tooltip=['日期標籤', '部門', '總營業額', '總來客數']
+                    ).properties(height=350)
+                    st.altair_chart(bar_chart, use_container_width=True)
+                    
+                with tab2:
+                    st.caption("各店客單價波動比較，反映現場同仁推銷力道與高單價品項點購率差異。")
+                    line_chart_spend = alt.Chart(chart_df).mark_line(point=True).encode(
+                        x=alt.X('日期標籤:N', title='日期'),
+                        y=alt.Y('客單價:Q', title='客單價 ($)', scale=alt.Scale(zero=False)),
+                        color=alt.Color('部門:N', title='分店'),
+                        tooltip=['日期標籤', '部門', '客單價', '總營業額']
+                    ).properties(height=350)
+                    st.altair_chart(line_chart_spend, use_container_width=True)
+                    
+                with tab3:
+                    st.caption("各店工時產值比較。數字過低代表人力閒置，過高代表現場過勞且可能犧牲服務品質。")
+                    line_chart_prod = alt.Chart(chart_df).mark_line(point=True).encode(
+                        x=alt.X('日期標籤:N', title='日期'),
+                        y=alt.Y('工時產值:Q', title='產值 ($/hr)', scale=alt.Scale(zero=False)),
+                        color=alt.Color('部門:N', title='分店'),
+                        tooltip=['日期標籤', '部門', '工時產值', '總工時']
+                    ).properties(height=350)
+                    st.altair_chart(line_chart_prod, use_container_width=True)
+                    
+                with tab4:
+                    st.caption("各店每日人事成本佔比比較。當佔比異常飆升時，應立即檢視該店排班。")
+                    line_chart_labor = alt.Chart(chart_df).mark_line(point=True).encode(
+                        x=alt.X('日期標籤:N', title='日期'),
+                        y=alt.Y('人事成本數值:Q', title='人事成本佔比 (%)', scale=alt.Scale(zero=False)),
+                        color=alt.Color('部門:N', title='分店'),
+                        tooltip=['日期標籤', '部門', '人事成本數值', '總工時']
+                    ).properties(height=350)
+                    st.altair_chart(line_chart_labor, use_container_width=True)
+            else:
+                def aggregate_daily(df):
+                    res = pd.Series(dtype='float64')
+                    res['總營業額'] = df['總營業額'].sum()
+                    res['總來客數'] = df['總來客數'].sum()
+                    res['總工時'] = df['總工時'].sum()
+                    daily_cost = (df['總工時'] * df['平均時薪']).sum()
+                    res['客單價'] = res['總營業額'] / res['總來客數'] if res['總來客數'] > 0 else 0
+                    res['工時產值'] = res['總營業額'] / res['總工時'] if res['總工時'] > 0 else 0
+                    res['人事成本數值'] = (daily_cost / res['總營業額'] * 100) if res['總營業額'] > 0 else 0
+                    return res
+
+                agg_df = chart_df.groupby('日期標籤').apply(aggregate_daily).reset_index()
                 
-            with tab2:
-                st.caption("客單價的波動能直接反映現場同仁的推銷力道與高單價品項點購率。")
-                line_chart_spend = alt.Chart(chart_df).mark_line(point=True, color='#F2A65A').encode(
-                    x=alt.X('日期標籤:N', title='日期', sort=None),
-                    y=alt.Y('客單價:Q', title='客單價 ($)', scale=alt.Scale(zero=False)),
-                    tooltip=['日期標籤', '客單價', '總營業額', '總來客數']
-                ).properties(height=350)
-                st.altair_chart(line_chart_spend, use_container_width=True)
-                
-            with tab3:
-                st.caption("觀察工時產值折線。數字過低代表人力閒置，過高代表現場過勞且可能犧牲服務品質。")
-                line_chart_prod = alt.Chart(chart_df).mark_line(point=True, color='#D64933').encode(
-                    x=alt.X('日期標籤:N', title='日期', sort=None),
-                    y=alt.Y('工時產值:Q', title='產值 ($/hr)', scale=alt.Scale(zero=False)),
-                    tooltip=['日期標籤', '工時產值', '總工時']
-                ).properties(height=350)
-                st.altair_chart(line_chart_prod, use_container_width=True)
-                
-            with tab4:
-                st.caption("監控每日人事成本佔比。當佔比異常飆升時，應立即檢視排班是否過於寬鬆。")
-                line_chart_labor = alt.Chart(chart_df).mark_line(point=True, color='#779CAB').encode(
-                    x=alt.X('日期標籤:N', title='日期', sort=None),
-                    y=alt.Y('人事成本數值:Q', title='人事成本佔比 (%)', scale=alt.Scale(zero=False)),
-                    tooltip=[
-                        alt.Tooltip('日期標籤', title='日期'), 
-                        alt.Tooltip('人事成本數值', title='人事成本 (%)'), 
-                        alt.Tooltip('總工時', title='總工時')
-                    ]
-                ).properties(height=350)
-                st.altair_chart(line_chart_labor, use_container_width=True)
+                with tab1:
+                    st.caption("全品牌每日營收總和趨勢。")
+                    bar_chart = alt.Chart(agg_df).mark_bar(color='#2E86AB').encode(
+                        x=alt.X('日期標籤:N', title='日期'),
+                        y=alt.Y('總營業額:Q', title='總營業額 ($)'),
+                        tooltip=['日期標籤', '總營業額', '總來客數']
+                    ).properties(height=350)
+                    st.altair_chart(bar_chart, use_container_width=True)
+                    
+                with tab2:
+                    st.caption("全品牌綜合客單價趨勢。")
+                    line_chart_spend = alt.Chart(agg_df).mark_line(point=True, color='#F2A65A').encode(
+                        x=alt.X('日期標籤:N', title='日期'),
+                        y=alt.Y('客單價:Q', title='客單價 ($)', scale=alt.Scale(zero=False)),
+                        tooltip=['日期標籤', '客單價', '總營業額']
+                    ).properties(height=350)
+                    st.altair_chart(line_chart_spend, use_container_width=True)
+                    
+                with tab3:
+                    st.caption("全品牌綜合工時產值。")
+                    line_chart_prod = alt.Chart(agg_df).mark_line(point=True, color='#D64933').encode(
+                        x=alt.X('日期標籤:N', title='日期'),
+                        y=alt.Y('工時產值:Q', title='產值 ($/hr)', scale=alt.Scale(zero=False)),
+                        tooltip=['日期標籤', '工時產值', '總工時']
+                    ).properties(height=350)
+                    st.altair_chart(line_chart_prod, use_container_width=True)
+                    
+                with tab4:
+                    st.caption("全品牌綜合人事成本佔比。")
+                    line_chart_labor = alt.Chart(agg_df).mark_line(point=True, color='#779CAB').encode(
+                        x=alt.X('日期標籤:N', title='日期'),
+                        y=alt.Y('人事成本數值:Q', title='人事成本佔比 (%)', scale=alt.Scale(zero=False)),
+                        tooltip=['日期標籤', '人事成本數值', '總工時']
+                    ).properties(height=350)
+                    st.altair_chart(line_chart_labor, use_container_width=True)
 
             st.divider()
             st.subheader("當月明細數據")
@@ -414,9 +462,3 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
-
-
-
-
-
-
