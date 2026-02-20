@@ -20,7 +20,6 @@ SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
 # ==========================================
 # 系統架構：資料層 (Data Layer)
-# 洞察：未來 App 轉換資料庫時，只需修改這個 Class 內的邏輯
 # ==========================================
 class DatabaseManager:
     def __init__(self, sid, secrets):
@@ -52,7 +51,6 @@ class DatabaseManager:
             return None, None, None
 
     def upsert_daily_report(self, date_str, department, new_row):
-        """執行報表的新增或覆蓋，隔離底層語法"""
         if not self.client: return False, "連線失敗"
         try:
             sh = self.client.open_by_key(self.sid)
@@ -79,7 +77,21 @@ class DatabaseManager:
         except Exception as e:
             return False, str(e)
 
-# 實例化資料庫管理員
+    def update_backend_sheet(self, sheet_name, df):
+        """將修改後的 DataFrame 完整覆寫回 Google Sheets"""
+        if not self.client: return False, "連線失敗"
+        try:
+            sh = self.client.open_by_key(self.sid)
+            sheet = sh.worksheet(sheet_name)
+            sheet.clear()
+            # 填補空缺值避免 JSON 序列化報錯
+            df_cleaned = df.fillna("")
+            data = [df_cleaned.columns.tolist()] + df_cleaned.values.tolist()
+            sheet.update(values=data, range_name="A1")
+            return True, "success"
+        except Exception as e:
+            return False, str(e)
+
 db = DatabaseManager(SID, st.secrets)
 
 @st.cache_data(ttl=300)
@@ -115,11 +127,19 @@ if login_ui(user_df):
     TARGETS = dict(zip(settings_df['部門'], settings_df['月目標']))
     HOURLY_RATES = dict(zip(settings_df['部門'], settings_df['平均時薪']))
     is_admin = st.session_state.get("user_role") == "admin"
+    is_ceo = st.session_state.get("user_role") == "ceo"
 
     with st.sidebar:
         st.title(f"{st.session_state['user_name']}")
         st.caption(f"權限等級：{st.session_state['user_role'].upper()}")
-        mode = st.radio("功能選單", ["數據錄入", "月度損益彙總"])
+        
+        # 依據權限動態生成選單
+        menu_options = ["數據錄入", "月度損益彙總"]
+        if is_admin:
+            menu_options.append("系統後台管理")
+            
+        mode = st.radio("功能選單", menu_options)
+        
         if st.button("刷新數據"):
             st.cache_data.clear()
             st.rerun()
@@ -127,7 +147,36 @@ if login_ui(user_df):
             st.session_state.clear()
             st.rerun()
 
-    if mode == "數據錄入":
+    if mode == "系統後台管理":
+        st.title("系統後台管理")
+        st.info("此區塊修改將直接覆寫核心資料庫。新增分店、修改目標或新增員工帳號皆在此完成。")
+        
+        tab_users, tab_settings = st.tabs(["帳號與權限管理", "分店營運設定"])
+        
+        with tab_users:
+            st.subheader("使用者名單")
+            st.caption("權限等級規範：admin (管理員) / ceo (執行長) / staff (店長)。負責部門若為全部請填寫 ALL。")
+            edited_users = st.data_editor(user_df, num_rows="dynamic", use_container_width=True, key="user_editor")
+            if st.button("儲存帳號設定", type="primary"):
+                success, msg = db.update_backend_sheet("Users", edited_users)
+                if success:
+                    st.success("帳號資料已成功同步至資料庫！")
+                    st.cache_data.clear()
+                else:
+                    st.error(f"寫入失敗：{msg}")
+
+        with tab_settings:
+            st.subheader("各分店目標與時薪基準")
+            edited_settings = st.data_editor(settings_df, num_rows="dynamic", use_container_width=True, key="setting_editor")
+            if st.button("儲存營運設定", type="primary"):
+                success, msg = db.update_backend_sheet("Settings", edited_settings)
+                if success:
+                    st.success("營運設定已成功同步至資料庫！")
+                    st.cache_data.clear()
+                else:
+                    st.error(f"寫入失敗：{msg}")
+
+    elif mode == "數據錄入":
         st.title("營運數據錄入")
         dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
         department = st.selectbox("部門", dept_options)
@@ -239,7 +288,6 @@ if login_ui(user_df):
                 ops_note.strip(), tags_str, reason_action.strip(), "已提交", announcement.strip()
             ]
             
-            # 將儲存指令交由 Data Layer 處理，介面層不再過問細節
             success, action = db.upsert_daily_report(str(date), department, new_row)
             
             if success:
@@ -274,7 +322,6 @@ if login_ui(user_df):
                 st.caption(f"**金額備註：** {rev_memo}")
             st.divider()
 
-            # --- 文字預覽與一鍵複製區雙層設計 ---
             st.subheader("系統文字彙整")
             
             st.markdown("##### 📝 預覽區 (同仁確認用，已自動換行)")
