@@ -6,7 +6,8 @@ import pandas as pd
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
-# 定義欄位結構 (共 30 欄)，確保 Google Sheets 的標題列與此完全一致
+# 定義欄位結構 (共 30 欄)
+# 🚨 必須確保 Google Sheets 的標題列與此「完全一致」，尤其是「現金折價卷」的位置
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
@@ -73,9 +74,11 @@ user_df, settings_df, report_data = load_all_data()
 if login_ui(user_df):
     TARGETS = dict(zip(settings_df['部門'], settings_df['月目標']))
     HOURLY_RATES = dict(zip(settings_df['部門'], settings_df['平均時薪']))
+    is_admin = st.session_state.get("user_role") == "admin"
 
     with st.sidebar:
         st.title(f"{st.session_state['user_name']}")
+        st.caption(f"權限等級：{st.session_state['user_role'].upper()}")
         mode = st.radio("功能選單", ["數據錄入", "月度損益彙總"])
         if st.button("刷新數據"):
             st.cache_data.clear()
@@ -98,11 +101,11 @@ if login_ui(user_df):
             df_history = pd.DataFrame(report_data)
             if not df_history.empty and '今日剰' in df_history.columns:
                 df_history['日期'] = pd.to_datetime(df_history['日期'])
-                # 篩選該部門歷史資料，並依日期降冪排序
-                dept_history = df_history[df_history['部門'] == department].sort_values(by='日期', ascending=False)
-                if not dept_history.empty:
-                    # 取得最近一筆的今日剰
-                    last_value = dept_history.iloc[0]['今日剰']
+                # 排除當前選定日期的資料，確保抓到的是「歷史」最後一筆
+                past_history = df_history[(df_history['部門'] == department) & (df_history['日期'] < pd.to_datetime(date))]
+                past_history = past_history.sort_values(by='日期', ascending=False)
+                if not past_history.empty:
+                    last_value = past_history.iloc[0]['今日剰']
                     if pd.notna(last_value) and str(last_value).strip() != "":
                         last_petty_cash = int(float(last_value))
 
@@ -130,8 +133,13 @@ if login_ui(user_df):
         st.subheader("零用金回報")
         p1, p2, p3 = st.columns(3)
         with p1:
-            # 強制帶入前一日數據，並設為不可修改
-            petty_yesterday = st.number_input("昨日剩 (系統自動帶入)", value=last_petty_cash, step=100, disabled=True)
+            # 依據權限決定是否鎖定輸入框
+            petty_yesterday = st.number_input(
+                "昨日剩 (系統自動帶入)" if not is_admin else "昨日剩 (管理員解鎖模式)", 
+                value=last_petty_cash, 
+                step=100, 
+                disabled=not is_admin
+            )
         with p2:
             petty_expense = st.number_input("今日支出", min_value=0, step=100)
         with p3:
@@ -161,7 +169,7 @@ if login_ui(user_df):
         with col_c2:
             reason_action = st.text_area("原因與處理結果", height=60)
 
-        # --- 核心邏輯計算 (已加入強制型態轉換防護) ---
+        # --- 核心邏輯計算 ---
         total_rev = float(cash + card + remit)
         total_hrs = float(k_hours + f_hours)
         productivity = float(total_rev / total_hrs) if total_hrs > 0 else 0.0
@@ -174,17 +182,17 @@ if login_ui(user_df):
             if not raw_df.empty:
                 raw_df['日期'] = pd.to_datetime(raw_df['日期'])
                 current_month_str = date.strftime('%Y-%m')
-                mask = (raw_df['部門'] == department) & (raw_df['日期'].dt.strftime('%Y-%m') == current_month_str)
+                # 計算當月歷史營收（排除今天，以免重複加總）
+                mask = (raw_df['部門'] == department) & (raw_df['日期'].dt.strftime('%Y-%m') == current_month_str) & (raw_df['日期'] < pd.to_datetime(date))
                 historical_month_rev = float(pd.to_numeric(raw_df.loc[mask, '總營業額'], errors='coerce').fillna(0).sum())
                 current_month_rev += historical_month_rev
         
         target_ratio = float(current_month_rev / month_target) if month_target > 0 else 0.0
 
-        # --- 提交與截圖區 ---
+        # --- 提交與覆蓋邏輯 ---
         if st.button("提交報表", type="primary", use_container_width=True):
             sheet = get_report_sheet()
             
-            # 確保寫入前皆為基礎資料型態，避免 JSON 報錯
             new_row = [
                 str(date), department, 
                 int(cash), int(card), int(remit), int(cash_coupon), rev_memo,
@@ -196,7 +204,30 @@ if login_ui(user_df):
                 int(ikkon_coupon), int(thousand_coupon), int(total_coupon),
                 ops_note, tags_str, reason_action, "已提交", announcement
             ]
-            sheet.append_row(new_row)
+            
+            # 尋找是否已有同日同部門的資料
+            all_values = sheet.get_all_values()
+            target_row_idx = None
+            
+            for i, row in enumerate(all_values):
+                if i == 0: continue # 跳過標題列
+                if len(row) >= 2 and row[0] == str(date) and row[1] == department:
+                    target_row_idx = i + 1 # gspread 行數從 1 開始計算
+                    break
+            
+            if target_row_idx:
+                # 若存在，執行覆蓋更新 (使用 update_cells 確保相容性)
+                cell_list = sheet.range(f"A{target_row_idx}:AD{target_row_idx}")
+                for j, cell in enumerate(cell_list):
+                    if j < len(new_row):
+                        cell.value = new_row[j]
+                sheet.update_cells(cell_list)
+                st.success(f"{date} {department} 的營運報表已成功更新。")
+            else:
+                # 若不存在，新增至最後一行
+                sheet.append_row(new_row)
+                st.success(f"{date} {department} 的營運報表已成功新增。")
+                
             st.cache_data.clear()
             
             # --- 專業版精簡截圖區 ---
