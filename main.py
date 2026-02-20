@@ -125,7 +125,7 @@ if login_ui(user_df):
         st.title(f"{st.session_state['user_name']}")
         st.caption(f"權限等級：{st.session_state['user_role'].upper()}")
         
-        menu_options = ["數據錄入", "月度損益彙總"]
+        menu_options = ["數據登記", "月度損益彙總"]
         if is_admin:
             menu_options.append("系統後台管理")
             
@@ -167,8 +167,8 @@ if login_ui(user_df):
                 else:
                     st.error(f"寫入失敗：{msg}")
 
-    elif mode == "數據錄入":
-        st.title("營運數據錄入")
+    elif mode == "數據登記":
+        st.title("營運數據登記")
         dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
         department = st.selectbox("部門", dept_options)
         date = st.date_input("報表日期", datetime.date.today())
@@ -462,3 +462,4 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
+
