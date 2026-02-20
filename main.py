@@ -177,7 +177,7 @@ if login_ui(user_df):
                     st.error(f"寫入失敗：{msg}")
 
     elif mode == "數據錄入":
-        st.title("營運數據錄入")
+        st.title("營運數據登記")
         dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
         department = st.selectbox("部門", dept_options)
         date = st.date_input("報表日期", datetime.date.today())
@@ -196,7 +196,7 @@ if login_ui(user_df):
                     if pd.notna(last_value) and str(last_value).strip() != "":
                         last_petty_cash = int(float(last_value))
 
-        st.subheader("營收數據")
+        st.subheader("營運數據")
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             cash = st.number_input("現金收入", min_value=0, step=100)
@@ -308,7 +308,7 @@ if login_ui(user_df):
 | 刷卡 | ${int(card):,.0f} | 工時產值 | ${int(productivity):,.0f}/hr |
 | 匯款 | ${int(remit):,.0f} | 人事占比 | {labor_ratio*100:.1f}% |
 | 現金折價卷 | ${int(cash_coupon):,.0f} | 內/外場工時 | {k_hours} / {f_hours} hr |
-| **月營業額** | **${int(current_month_rev):,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
+| **月營收 / 距離目標** | **${int(current_month_rev):,.0f} / ${int(month_target - current_month_rev):,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
 
 | 零用金管理 | 金額 | 折抵券結算 | 金額 |
 | :--- | :--- | :--- | :--- |
@@ -414,3 +414,4 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
+
