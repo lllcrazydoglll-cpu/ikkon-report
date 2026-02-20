@@ -249,7 +249,7 @@ if login_ui(user_df):
             
             st.divider()
 
-            st.subheader("系統文字彙整 (請直接複製)")
+            st.subheader("系統文字彙整 (請全選複製)")
             text_summary = f"""【營運回報】
 {ops_note}
 
@@ -258,7 +258,8 @@ if login_ui(user_df):
 
 【客訴處理】({tags_str})
 {reason_action}"""
-            st.code(text_summary, language="text")
+            # 改用 text_area 允許文字自動換行，提升預覽與複製體驗
+            st.text_area("預覽與複製區", value=text_summary, height=250, disabled=True)
 
     elif mode == "月度損益彙總":
         st.title("月度財務彙總分析")
@@ -271,13 +272,17 @@ if login_ui(user_df):
             month_list = sorted(raw_df['日期'].dt.strftime('%Y-%m').unique(), reverse=True)
             target_month = st.selectbox("選擇月份", month_list)
             
-            # 過濾出選擇月份的資料，並依據日期排序以確保圖表時序正確
             filtered_df = raw_df[raw_df['日期'].dt.strftime('%Y-%m') == target_month].copy()
             filtered_df = filtered_df.sort_values(by='日期')
             
             # 將需要計算及繪圖的欄位轉換為數值
-            for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款', '工時產值']:
+            for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款', '工時產值', '客單價']:
                 filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
+            
+            # 處理人事成本占比（將字串百分比轉換為數值以供繪圖）
+            if '人事成本占比' in filtered_df.columns:
+                filtered_df['人事成本數值'] = filtered_df['人事成本占比'].astype(str).str.replace('%', '', regex=False)
+                filtered_df['人事成本數值'] = pd.to_numeric(filtered_df['人事成本數值'], errors='coerce').fillna(0)
             
             m_rev = filtered_df['總營業額'].sum()
             m_hrs = filtered_df['總工時'].sum()
@@ -292,11 +297,10 @@ if login_ui(user_df):
             # --- 視覺化圖表區塊 ---
             st.subheader("趨勢與結構分析")
             
-            # 準備繪圖所需資料格式 (新增短日期字串供 X 軸顯示)
             chart_df = filtered_df.copy()
             chart_df['日期標籤'] = chart_df['日期'].dt.strftime('%m-%d')
             
-            tab1, tab2, tab3 = st.tabs(["每日營收趨勢", "支付結構分析", "工時產值監控"])
+            tab1, tab2, tab3, tab4 = st.tabs(["每日營收趨勢", "客單價趨勢", "工時產值監控", "人事成本佔比趨勢"])
             
             with tab1:
                 st.caption("透過每日營收起伏，檢視平假日業績落差與行銷活動成效。")
@@ -308,26 +312,35 @@ if login_ui(user_df):
                 st.altair_chart(bar_chart, use_container_width=True)
                 
             with tab2:
-                st.caption("分析消費者支付習慣，作為現金流調度與手續費談判的依據。")
-                # 將現金、刷卡、匯款由寬表轉為長表(Melt)，以符合 Altair 的堆疊圖表格式
-                melted_df = chart_df.melt(id_vars=['日期標籤'], value_vars=['現金', '刷卡', '匯款'], 
-                                          var_name='支付方式', value_name='金額')
-                stack_chart = alt.Chart(melted_df).mark_bar().encode(
+                st.caption("客單價的波動能直接反映現場同仁的推銷力道與高單價品項點購率。")
+                line_chart_spend = alt.Chart(chart_df).mark_line(point=True, color='#F2A65A').encode(
                     x=alt.X('日期標籤:N', title='日期', sort=None),
-                    y=alt.Y('金額:Q', title='金額 ($)'),
-                    color=alt.Color('支付方式:N', scale=alt.Scale(scheme='set2')),
-                    tooltip=['日期標籤', '支付方式', '金額']
+                    y=alt.Y('客單價:Q', title='客單價 ($)', scale=alt.Scale(zero=False)),
+                    tooltip=['日期標籤', '客單價', '總營業額', '總來客數']
                 ).properties(height=350)
-                st.altair_chart(stack_chart, use_container_width=True)
+                st.altair_chart(line_chart_spend, use_container_width=True)
                 
             with tab3:
                 st.caption("觀察工時產值折線。數字過低代表人力閒置，過高代表現場過勞且可能犧牲服務品質。")
-                line_chart = alt.Chart(chart_df).mark_line(point=True, color='#D64933').encode(
+                line_chart_prod = alt.Chart(chart_df).mark_line(point=True, color='#D64933').encode(
                     x=alt.X('日期標籤:N', title='日期', sort=None),
-                    y=alt.Y('工時產值:Q', title='產值 ($/hr)'),
+                    y=alt.Y('工時產值:Q', title='產值 ($/hr)', scale=alt.Scale(zero=False)),
                     tooltip=['日期標籤', '工時產值', '總工時']
                 ).properties(height=350)
-                st.altair_chart(line_chart, use_container_width=True)
+                st.altair_chart(line_chart_prod, use_container_width=True)
+                
+            with tab4:
+                st.caption("監控每日人事成本佔比。當佔比異常飆升時，應立即檢視排班是否過於寬鬆。")
+                line_chart_labor = alt.Chart(chart_df).mark_line(point=True, color='#779CAB').encode(
+                    x=alt.X('日期標籤:N', title='日期', sort=None),
+                    y=alt.Y('人事成本數值:Q', title='人事成本佔比 (%)', scale=alt.Scale(zero=False)),
+                    tooltip=[
+                        alt.Tooltip('日期標籤', title='日期'), 
+                        alt.Tooltip('人事成本數值', title='人事成本 (%)'), 
+                        alt.Tooltip('總工時', title='總工時')
+                    ]
+                ).properties(height=350)
+                st.altair_chart(line_chart_labor, use_container_width=True)
 
             # --- 原始明細數據 ---
             st.divider()
