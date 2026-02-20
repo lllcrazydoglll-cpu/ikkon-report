@@ -7,7 +7,7 @@ import altair as alt
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
-# 1. 嚴格對齊 Sheet1 20 個欄位
+# 1. 保持 20 欄位結構，但將處理狀態位元留空，確保 Google Sheets 格式不跑位
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "金額備註",
     "總營業額", "總來客數", "客單價", "內場工時", "外場工時",
@@ -75,10 +75,7 @@ if login_ui(user_df):
 
     with st.sidebar:
         st.title(f"{st.session_state['user_name']}")
-        menu_options = ["數據錄入", "月度損益彙總"]
-        if st.session_state['user_name'] == "管理員" or st.session_state['user_role'] == 'admin':
-            menu_options.append("後台參數設定")
-        mode = st.radio("功能選單", menu_options)
+        mode = st.radio("功能選單", ["數據錄入", "月度損益彙總"])
         if st.button("刷新數據"):
             st.cache_data.clear()
             st.rerun()
@@ -87,13 +84,12 @@ if login_ui(user_df):
             st.rerun()
 
     if mode == "數據錄入":
-        st.title("IKKON 營運數據錄入")
+        st.title("營運數據錄入")
         dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
-        department = st.selectbox("所屬部門", dept_options)
+        department = st.selectbox("部門", dept_options)
         date = st.date_input("報表日期", datetime.date.today())
         avg_rate = HOURLY_RATES.get(department, 205)
         
-        st.subheader("一、財務與工時")
         c1, c2 = st.columns(2)
         with c1:
             cash = st.number_input("現金收入", min_value=0, step=100)
@@ -102,10 +98,10 @@ if login_ui(user_df):
             rev_memo = st.text_input("金額備註", "無")
         with c2:
             customers = st.number_input("總來客數", min_value=1, step=1)
-            k_hours = st.number_input("內場總工時", min_value=0.0, step=0.5)
-            f_hours = st.number_input("外場總工時", min_value=0.0, step=0.5)
+            k_hours = st.number_input("內場工時", min_value=0.0, step=0.5)
+            f_hours = st.number_input("外場工時", min_value=0.0, step=0.5)
 
-        st.subheader("二、營運與客訴摘要")
+        st.subheader("營運與客訴回報")
         ops_note = st.text_area("營運狀況回報", height=100)
         announcement = st.text_area("事項宣達", height=60)
         
@@ -113,9 +109,8 @@ if login_ui(user_df):
         with col_c1:
             tags = st.multiselect("客訴分類", ["餐點品質", "服務態度", "環境衛生", "上菜效率", "訂位系統", "其他"])
             tags_str = ", ".join(tags) if tags else "無"
-            comp_status = st.selectbox("處理狀態", ["已處理", "處理中", "無需處理"])
         with col_c2:
-            reason_action = st.text_area("客訴原因與處理結果", height=60)
+            reason_action = st.text_area("原因與處理結果", height=60)
 
         total_rev = cash + card + remit
         total_hrs = k_hours + f_hours
@@ -128,38 +123,44 @@ if login_ui(user_df):
                 str(date), department, cash, card, remit, rev_memo,
                 total_rev, customers, (total_rev/customers if customers > 0 else 0),
                 k_hours, f_hours, total_hrs, avg_rate, productivity, f"{labor_ratio*100:.1f}%",
-                ops_note, tags_str, reason_action, comp_status, announcement
+                ops_note, tags_str, reason_action, "已提交", announcement
             ]
             sheet.append_row(new_row)
             st.cache_data.clear()
-            st.success("數據已存入雲端。")
             
-            # --- 區塊一：營運數據截圖區 (針對會計與對帳需求) ---
+            # --- 極簡截圖區 (縮減垂直高度，確保一張圖讀完) ---
             st.divider()
-            st.subheader("營運數據回報 (請截圖此區塊)")
-            st.write(f"日期：{date} ｜ 部門：{department}")
+            st.markdown(f"### 營運數據截圖區\n**{date} | {department}**")
             
-            # 財務明細列
+            # 第一排：財務數據
             f1, f2, f3, f4 = st.columns(4)
-            f1.metric("現金", f"${cash:,.0f}")
-            f2.metric("刷卡", f"${card:,.0f}")
-            f3.metric("匯款", f"${remit:,.0f}")
-            f4.metric("總營收", f"${total_rev:,.0f}")
+            f1.caption("現金")
+            f1.write(f"${cash:,.0f}")
+            f2.caption("刷卡")
+            f2.write(f"${card:,.0f}")
+            f3.caption("匯款")
+            f3.write(f"${remit:,.0f}")
+            f4.caption("總營收")
+            f4.write(f"**${total_rev:,.0f}**")
             
-            # 營運指標列
+            # 第二排：營運數據
             o1, o2, o3, o4 = st.columns(4)
-            o1.metric("來客數", f"{customers}")
-            o2.metric("客單價", f"${(total_rev/customers if customers > 0 else 0):,.0f}")
-            o3.metric("工時產值", f"${productivity:,.0f}/hr")
-            o4.metric("人事成本%", f"{labor_ratio*100:.1f}%")
+            o1.caption("來客數")
+            o1.write(f"{customers}")
+            o2.caption("客單價")
+            o2.write(f"${(total_rev/customers if customers > 0 else 0):,.0f}")
+            o3.caption("工時產值")
+            o3.write(f"${productivity:,.0f}/hr")
+            o4.caption("人事成本")
+            o4.write(f"{labor_ratio*100:.1f}%")
             
             if rev_memo != "無":
-                st.info(f"金額備註：{rev_memo}")
-
-            # --- 區塊二：營運狀況複製區 ---
+                st.caption(f"備註：{rev_memo}")
             st.divider()
-            st.subheader("營運狀況回報 (請複製下方文字)")
-            text_summary = f"【營運回報】\n{ops_note}\n\n【事項宣達】\n{announcement}\n\n【客訴處理】({tags_str})\n{reason_action}\n狀態：{comp_status}"
+
+            # --- 文字複製區 ---
+            st.subheader("營運狀況文字 (請複製)")
+            text_summary = f"【營運回報】\n{ops_note}\n\n【事項宣達】\n{announcement}\n\n【客訴處理】({tags_str})\n{reason_action}"
             st.code(text_summary, language="text")
 
     elif mode == "月度損益彙總":
@@ -174,7 +175,7 @@ if login_ui(user_df):
             target_month = st.selectbox("選擇月份", month_list)
             filtered_df = raw_df[raw_df['日期'].dt.strftime('%Y-%m') == target_month].copy()
             
-            # 數據轉換與計算
+            # 轉換財務欄位為數值
             for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款']:
                 filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
             
@@ -187,9 +188,8 @@ if login_ui(user_df):
             c2.metric("預估人事支出", f"${m_cost:,.0f}")
             c3.metric("平均工時產值", f"${m_rev/m_hrs:,.0f}/hr" if m_hrs > 0 else "0")
             
-            st.subheader("當月明細數據 (會計查帳用)")
-            # 顯示所有財務相關欄位
+            st.subheader("當月明細數據")
             display_cols = ['日期', '部門', '現金', '刷卡', '匯款', '總營業額', '金額備註', '營運回報', '客訴分類標籤']
             st.dataframe(filtered_df[display_cols], use_container_width=True)
         else:
-            st.info("目前尚無數據。")
+            st.info("尚未有數據。")
