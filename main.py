@@ -7,7 +7,6 @@ import altair as alt
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
-# 定義欄位結構 (共 30 欄)
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
@@ -17,38 +16,81 @@ SHEET_COLUMNS = [
     "營運回報", "客訴分類標籤", "客訴原因說明", "客訴處理結果", "事項宣達"
 ]
 
-def get_gspread_client():
-    try:
-        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds_info = dict(st.secrets["gcp_service_account"])
-        creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
-        creds = Credentials.from_service_account_info(creds_info, scopes=scope)
-        return gspread.authorize(creds)
-    except Exception as e:
-        st.error(f"雲端連線失敗：{e}")
-        return None
-
 SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
+# ==========================================
+# 系統架構：資料層 (Data Layer)
+# 洞察：未來 App 轉換資料庫時，只需修改這個 Class 內的邏輯
+# ==========================================
+class DatabaseManager:
+    def __init__(self, sid, secrets):
+        self.sid = sid
+        self.secrets = secrets
+        self.client = self._connect()
+
+    def _connect(self):
+        try:
+            scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+            creds_info = dict(self.secrets["gcp_service_account"])
+            creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+            creds = Credentials.from_service_account_info(creds_info, scopes=scope)
+            return gspread.authorize(creds)
+        except Exception as e:
+            st.error(f"資料庫連線失敗：{e}")
+            return None
+
+    def get_all_data(self):
+        if not self.client: return None, None, None
+        try:
+            sh = self.client.open_by_key(self.sid)
+            user_df = pd.DataFrame(sh.worksheet("Users").get_all_records())
+            settings_df = pd.DataFrame(sh.worksheet("Settings").get_all_records())
+            report_data = sh.worksheet("Sheet1").get_all_records()
+            return user_df, settings_df, report_data
+        except Exception as e:
+            st.error(f"資料讀取失敗：{e}")
+            return None, None, None
+
+    def upsert_daily_report(self, date_str, department, new_row):
+        """執行報表的新增或覆蓋，隔離底層語法"""
+        if not self.client: return False, "連線失敗"
+        try:
+            sh = self.client.open_by_key(self.sid)
+            sheet = sh.worksheet("Sheet1")
+            all_values = sheet.get_all_values()
+            target_row_idx = None
+            
+            for i, row in enumerate(all_values):
+                if i == 0: continue
+                if len(row) >= 2 and row[0] == date_str and row[1] == department:
+                    target_row_idx = i + 1
+                    break
+            
+            if target_row_idx:
+                cell_list = sheet.range(f"A{target_row_idx}:AD{target_row_idx}")
+                for j, cell in enumerate(cell_list):
+                    if j < len(new_row):
+                        cell.value = new_row[j]
+                sheet.update_cells(cell_list)
+                return True, "updated"
+            else:
+                sheet.append_row(new_row)
+                return True, "inserted"
+        except Exception as e:
+            return False, str(e)
+
+# 實例化資料庫管理員
+db = DatabaseManager(SID, st.secrets)
+
 @st.cache_data(ttl=300)
-def load_all_data():
-    client = get_gspread_client()
-    if not client: return None, None, None
-    try:
-        sh = client.open_by_key(SID)
-        user_df = pd.DataFrame(sh.worksheet("Users").get_all_records())
-        settings_df = pd.DataFrame(sh.worksheet("Settings").get_all_records())
-        report_data = sh.worksheet("Sheet1").get_all_records()
-        return user_df, settings_df, report_data
-    except Exception as e:
-        st.error(f"資料讀取失敗：{e}")
-        return None, None, None
+def load_cached_data():
+    return db.get_all_data()
 
-def get_report_sheet():
-    client = get_gspread_client()
-    sh = client.open_by_key(SID)
-    return sh.worksheet("Sheet1")
+user_df, settings_df, report_data = load_cached_data()
 
+# ==========================================
+# 系統架構：介面與邏輯層 (UI & Business Logic Layer)
+# ==========================================
 def login_ui(user_df):
     if st.session_state.get("logged_in"): return True
     st.title("IKKON 系統管理登入")
@@ -68,8 +110,6 @@ def login_ui(user_df):
                     st.rerun()
             st.error("帳號或密碼錯誤")
     return False
-
-user_df, settings_df, report_data = load_all_data()
 
 if login_ui(user_df):
     TARGETS = dict(zip(settings_df['部門'], settings_df['月目標']))
@@ -187,8 +227,6 @@ if login_ui(user_df):
         target_ratio = float(current_month_rev / month_target) if month_target > 0 else 0.0
 
         if st.button("提交報表", type="primary", use_container_width=True):
-            sheet = get_report_sheet()
-            
             new_row = [
                 str(date), department, 
                 int(cash), int(card), int(remit), int(cash_coupon), rev_memo,
@@ -198,30 +236,18 @@ if login_ui(user_df):
                 int(avg_rate), int(productivity), f"{labor_ratio*100:.1f}%",
                 int(petty_yesterday), int(petty_expense), int(petty_replenish), int(petty_today),
                 int(ikkon_coupon), int(thousand_coupon), int(total_coupon),
-                ops_note, tags_str, reason_action, "已提交", announcement
+                ops_note.strip(), tags_str, reason_action.strip(), "已提交", announcement.strip()
             ]
             
-            all_values = sheet.get_all_values()
-            target_row_idx = None
+            # 將儲存指令交由 Data Layer 處理，介面層不再過問細節
+            success, action = db.upsert_daily_report(str(date), department, new_row)
             
-            for i, row in enumerate(all_values):
-                if i == 0: continue
-                if len(row) >= 2 and row[0] == str(date) and row[1] == department:
-                    target_row_idx = i + 1
-                    break
-            
-            if target_row_idx:
-                cell_list = sheet.range(f"A{target_row_idx}:AD{target_row_idx}")
-                for j, cell in enumerate(cell_list):
-                    if j < len(new_row):
-                        cell.value = new_row[j]
-                sheet.update_cells(cell_list)
-                st.success(f"{date} {department} 的營運報表已成功更新。")
+            if success:
+                action_text = "更新" if action == "updated" else "新增"
+                st.success(f"{date} {department} 的營運報表已成功{action_text}。")
+                st.cache_data.clear()
             else:
-                sheet.append_row(new_row)
-                st.success(f"{date} {department} 的營運報表已成功新增。")
-                
-            st.cache_data.clear()
+                st.error(f"報表寫入失敗，請聯絡系統管理員。錯誤訊息：{action}")
             
             st.divider()
             st.markdown(f"### 【營運日報】 {date} | {department}")
@@ -246,20 +272,17 @@ if login_ui(user_df):
             st.markdown(report_md)
             if rev_memo != "無":
                 st.caption(f"**金額備註：** {rev_memo}")
-            
             st.divider()
 
-            st.subheader("系統文字彙整 (請全選複製)")
-            text_summary = f"""【營運回報】
-{ops_note}
-
-【事項宣達】
-{announcement}
-
-【客訴處理】({tags_str})
-{reason_action}"""
-            # 改用 text_area 允許文字自動換行，提升預覽與複製體驗
-            st.text_area("預覽與複製區", value=text_summary, height=250, disabled=True)
+            # --- 文字預覽與一鍵複製區雙層設計 ---
+            st.subheader("系統文字彙整")
+            
+            st.markdown("##### 📝 預覽區 (同仁確認用，已自動換行)")
+            st.info(f"**【營運回報】**\n\n{ops_note.strip()}\n\n---\n\n**【事項宣達】**\n\n{announcement.strip()}\n\n---\n\n**【客訴處理】** ({tags_str})\n\n{reason_action.strip()}")
+            
+            st.markdown("##### 📋 一鍵複製區 (點擊右上角按鈕)")
+            text_summary = f"【營運回報】\n{ops_note.strip()}\n\n【事項宣達】\n{announcement.strip()}\n\n【客訴處理】({tags_str})\n{reason_action.strip()}"
+            st.code(text_summary, language="text")
 
     elif mode == "月度損益彙總":
         st.title("月度財務彙總分析")
@@ -275,11 +298,9 @@ if login_ui(user_df):
             filtered_df = raw_df[raw_df['日期'].dt.strftime('%Y-%m') == target_month].copy()
             filtered_df = filtered_df.sort_values(by='日期')
             
-            # 將需要計算及繪圖的欄位轉換為數值
             for col in ['總營業額', '總工時', '平均時薪', '現金', '刷卡', '匯款', '工時產值', '客單價']:
                 filtered_df[col] = pd.to_numeric(filtered_df[col], errors='coerce').fillna(0)
             
-            # 處理人事成本占比（將字串百分比轉換為數值以供繪圖）
             if '人事成本占比' in filtered_df.columns:
                 filtered_df['人事成本數值'] = filtered_df['人事成本占比'].astype(str).str.replace('%', '', regex=False)
                 filtered_df['人事成本數值'] = pd.to_numeric(filtered_df['人事成本數值'], errors='coerce').fillna(0)
@@ -294,9 +315,7 @@ if login_ui(user_df):
             c2.metric("預估人事支出", f"${m_cost:,.0f}")
             c3.metric("平均工時產值", f"${m_rev/m_hrs:,.0f}/hr" if m_hrs > 0 else "0")
             
-            # --- 視覺化圖表區塊 ---
             st.subheader("趨勢與結構分析")
-            
             chart_df = filtered_df.copy()
             chart_df['日期標籤'] = chart_df['日期'].dt.strftime('%m-%d')
             
@@ -342,7 +361,6 @@ if login_ui(user_df):
                 ).properties(height=350)
                 st.altair_chart(line_chart_labor, use_container_width=True)
 
-            # --- 原始明細數據 ---
             st.divider()
             st.subheader("當月明細數據")
             display_cols = ['日期', '部門', '現金', '刷卡', '匯款', '總營業額', '金額備註', '營運回報', '客訴分類標籤']
