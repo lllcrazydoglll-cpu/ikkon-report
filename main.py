@@ -299,7 +299,7 @@ if login_ui(user_df):
 | 刷卡 | ${int(card):,.0f} | 工時產值 | ${int(productivity):,.0f}/hr |
 | 匯款 | ${int(remit):,.0f} | 人事占比 | {labor_ratio*100:.1f}% |
 | 現金折價卷 | ${int(cash_coupon):,.0f} | 內/外場工時 | {k_hours} / {f_hours} hr |
-| **月營收 / 距離目標** | **${int(current_month_rev):,.0f} / ${int(month_target - current_month_rev):,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
+| **距離目標** | **${int(month_target - current_month_rev):,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
 
 | 零用金管理 | 金額 | 折抵券結算 | 金額 |
 | :--- | :--- | :--- | :--- |
@@ -313,9 +313,9 @@ if login_ui(user_df):
                 st.caption(f"**金額備註：** {rev_memo}")
             st.divider()
 
-            st.subheader("系統文字彙整")
+            st.subheader("回報文字彙整")
             
-            st.markdown("##### 預覽區 (同仁確認用，已自動換行)")
+            st.markdown("##### 預覽區 (同仁確認用)")
             st.info(f"**【營運回報】**\n\n{ops_note.strip()}\n\n---\n\n**【事項宣達】**\n\n{announcement.strip()}\n\n---\n\n**【客訴處理】** ({tags_str})\n\n{reason_action.strip()}")
             
             st.markdown("##### 一鍵複製區 (點擊右上角按鈕)")
@@ -462,4 +462,5 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
+
 
