@@ -103,6 +103,8 @@ def get_wrapped_lines(text, max_chars=21):
             paragraph = paragraph[max_chars:]
         if paragraph:
             lines.append(paragraph)
+    if not lines:
+        return ["無"]
     return lines
 
 def render_image(content_lines, theme_color=(180, 50, 50)):
@@ -171,8 +173,7 @@ def generate_ops_image(date, dept, prod, labor, k_hours, f_hours, ops_note, anno
     
     return render_image(lines)
 
-# 更新：加入產值參數
-def generate_weekly_image(date, dept, start_d, end_d, rev, spend, prod, review, hr_status, market, actions, author):
+def generate_weekly_image(date, dept, start_d, end_d, rev, spend, prod, review, hr_status, market, act1, act2, act3, author):
     lines = [
         "【 IKKON 值班主管週報 】",
         f"回報日：{date} | 分店：{dept}",
@@ -190,9 +191,19 @@ def generate_weekly_image(date, dept, start_d, end_d, rev, spend, prod, review, 
     lines.extend(["", "[ 行銷觀察與改善建議 ]"])
     lines.extend(get_wrapped_lines(market))
     lines.extend(["", "[ 下週行動方針 ]"])
-    lines.extend(get_wrapped_lines(actions))
-    lines.extend(["", "--------------------------------------", f"填寫人：{author}"])
     
+    # 建立具備縮排對齊功能的行動方針渲染器
+    def append_action(prefix_num, text):
+        w_lines = get_wrapped_lines(text, max_chars=18) # 預留字元空間給編號
+        lines.append(f"{prefix_num}. {w_lines[0]}")
+        for wl in w_lines[1:]:
+            lines.append(f"   {wl}") # 產生 3 個半形空白，完美對齊
+            
+    append_action(1, act1)
+    append_action(2, act2)
+    append_action(3, act3)
+    
+    lines.extend(["", "--------------------------------------", f"填寫人：{author}"])
     return render_image(lines, theme_color=(30, 80, 140))
 
 def login_ui(user_df):
@@ -340,7 +351,7 @@ if login_ui(user_df):
         total_coupon = cash_coupon + ikkon_coupon + thousand_coupon
         st.caption(f"總共折抵金：${total_coupon:,}")
 
-        st.markdown("##### 員工85折優惠權利 (當日若有多人使用，請依序填寫)")
+        st.markdown("**員工85折優惠權利 (當日若有多人使用，請依序填寫)**")
         discount_users = []
         discount_targets = []
         discount_displays = []
@@ -445,19 +456,28 @@ if login_ui(user_df):
     elif mode == "值班主管週報":
         st.title("值班主管週報")
         
+        # 智能判斷跨夜打烊時間 (凌晨 0-5 點視為昨天)
+        now = datetime.datetime.now()
+        logical_today = now.date()
+        if now.hour < 6:
+            logical_today = logical_today - datetime.timedelta(days=1)
+        
         if is_sunday:
             st.error("⚠️ **今日為系統週報結算日！請值班主管務必於下班前完成本週回報，並下載圖片回報至幹部群組。**")
         else:
-            st.info("系統建議：請於每週日進行週報結算，以掌握最完整的單週營運趨勢。")
+            st.info("系統建議：請選擇要結算的那一週（系統已自動為跨夜班次進行校正，亦可手動更改基準日）。")
 
         dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
         department = st.selectbox("部門", dept_options)
         
-        today = datetime.date.today()
-        start_of_week = today - datetime.timedelta(days=today.weekday())
+        st.markdown("##### 選擇結算基準日")
+        selected_date = st.date_input("系統會自動抓取此日期「所屬的星期一至星期日」作為本週數據區間", value=logical_today)
+        
+        # 依據人工(或智能)選取的日期，去推算週一與週日
+        start_of_week = selected_date - datetime.timedelta(days=selected_date.weekday())
         end_of_week = start_of_week + datetime.timedelta(days=6)
         
-        st.markdown(f"**統計區間**：`{start_of_week}` 至 `{end_of_week}`")
+        st.success(f"目前統計區間：`{start_of_week}` 至 `{end_of_week}`")
         
         week_rev, week_spend, week_prod = 0, 0, 0
         if report_data:
@@ -477,12 +497,9 @@ if login_ui(user_df):
                     
                     week_spend = week_rev / week_cust if week_cust > 0 else 0
                     week_prod = week_rev / week_hrs if week_hrs > 0 else 0
-                    
-                    st.success("已自動載入本週營業數據，請針對下方項目進行深度檢討。")
                 else:
-                    st.warning("⚠️ 系統尚未抓取到本週任何日報資料。")
+                    st.warning("⚠️ 系統尚未抓取到此區間的任何日報資料。")
         
-        # UI 更新：新增第三格產值顯示
         c1, c2, c3 = st.columns(3)
         with c1:
             st.metric("本週累計總營收", f"${week_rev:,.0f}")
@@ -494,38 +511,37 @@ if login_ui(user_df):
         st.divider()
         st.subheader("營運深度分析 (請詳細論述)")
         
-        # 利用 Markdown 大標題替代原本較小的標籤
-        st.markdown("##### 1. 數據與營運檢討")
-        review = st.text_area("1. 數據與營運檢討", placeholder="例：本週業績落後目標 5%，主因為寒流來襲，顧客銳減。但在銷售上成功推出高單價商品，拉高了整體客單價...", height=100, label_visibility="collapsed")
+        # 利用 Markdown 加大字體，消滅原本過小的淺色標籤
+        st.markdown("**1. 數據與營運檢討**")
+        review = st.text_area("1", placeholder="例：本週業績落後目標 5%，主因為寒流來襲，顧客銳減。但在銷售上成功推出高單價商品，拉高了整體客單價...", height=100, label_visibility="collapsed")
         
-        st.markdown("##### 2. 團隊與人事狀況")
-        hr_status = st.text_area("2. 團隊與人事狀況", placeholder="例：外場新人 A 培訓進度超前，已可獨立點餐；內場 B 預計下月離職，需盡快徵人遞補...", height=100, label_visibility="collapsed")
+        st.markdown("**2. 團隊與人事狀況**")
+        hr_status = st.text_area("2", placeholder="例：外場新人 A 培訓進度超前，已可獨立點餐；內場 B 預計下月離職，需盡快徵人遞補...", height=100, label_visibility="collapsed")
         
-        st.markdown("##### 3. 行銷觀察與改善建議")
-        market = st.text_area("3. 行銷觀察與改善建議", placeholder="例：顧客對於新推出的A商品相當喜歡，建議可成為常備商品；下週藝文特區有啤酒節，預計會帶來人潮...", height=100, label_visibility="collapsed")
+        st.markdown("**3. 行銷觀察與改善建議**")
+        market = st.text_area("3", placeholder="例：顧客對於新推出的A商品相當喜歡，建議可成為常備商品；下週藝文特區有啤酒節，預計會帶來人潮...", height=100, label_visibility="collapsed")
         
-        st.markdown("##### 4. 下週行動方針 (請具體列出三項目標)")
+        st.markdown("**4. 下週行動方針 (請具體列出三項目標)**")
         
-        # 三項行動方針全部改為高度100的文本框，並強制填寫
+        # 高度全面統一為 100
         st.markdown("**行動一**")
-        action_1 = st.text_area("行動一", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。", height=100, label_visibility="collapsed")
+        action_1 = st.text_area("a1", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。", height=100, label_visibility="collapsed")
         
         st.markdown("**行動二**")
-        action_2 = st.text_area("行動二", placeholder="例：調整內場備料方式，縮短出餐時間。", height=100, label_visibility="collapsed")
+        action_2 = st.text_area("a2", placeholder="例：調整內場備料方式，縮短出餐時間。", height=100, label_visibility="collapsed")
         
         st.markdown("**行動三**")
-        action_3 = st.text_area("行動三", placeholder="例：在週三前會完成聖誕節布置。", height=100, label_visibility="collapsed")
+        action_3 = st.text_area("a3", placeholder="例：在週三前會完成聖誕節布置。", height=100, label_visibility="collapsed")
         
         actions_str = f"1. {action_1.strip()}\n2. {action_2.strip()}\n3. {action_3.strip()}".strip()
 
         if st.button("提交值班主管週報", type="primary", use_container_width=True):
-            # 嚴格的防呆機制：6個欄位缺一不可
             if not review.strip() or not hr_status.strip() or not market.strip() or not action_1.strip() or not action_2.strip() or not action_3.strip():
                 st.error("請確實填寫檢討、人事、商圈觀察，以及【三項行動方針】，不可留白，這才是主管的核心價值。")
             else:
                 new_weekly_row = [
                     str(today), department, str(start_of_week), str(end_of_week),
-                    int(week_rev), int(week_spend), int(week_prod),  # 寫入產值
+                    int(week_rev), int(week_spend), int(week_prod), 
                     review.strip(), hr_status.strip(), market.strip(), actions_str, 
                     st.session_state['user_name']
                 ]
@@ -537,7 +553,8 @@ if login_ui(user_df):
                     
                     weekly_img_bytes = generate_weekly_image(
                         str(today), department, str(start_of_week), str(end_of_week),
-                        week_rev, week_spend, week_prod, review, hr_status, market, actions_str, st.session_state['user_name']
+                        week_rev, week_spend, week_prod, review, hr_status, market, 
+                        action_1.strip(), action_2.strip(), action_3.strip(), st.session_state['user_name']
                     )
                     
                     st.divider()
