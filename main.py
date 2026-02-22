@@ -25,7 +25,6 @@ SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
 class EnhancedDatabaseManager(DatabaseManager):
     def upsert_report(self, sheet_name, date_str, department, new_row):
-        """通用型覆寫寫入邏輯，支援日報與週報"""
         if not self.client: return False, "連線失敗"
         try:
             sh = self.client.open_by_key(self.sid)
@@ -35,7 +34,6 @@ class EnhancedDatabaseManager(DatabaseManager):
             
             for i, row in enumerate(all_values):
                 if i == 0: continue
-                # 假設第一欄都是日期，第二欄都是部門
                 if len(row) >= 2 and row[0] == date_str and row[1] == department:
                     target_row_idx = i + 1
                     break
@@ -192,12 +190,11 @@ def generate_weekly_image(date, dept, start_d, end_d, rev, spend, prod, review, 
     lines.extend(get_wrapped_lines(market))
     lines.extend(["", "[ 下週行動方針 ]"])
     
-    # 建立具備縮排對齊功能的行動方針渲染器
     def append_action(prefix_num, text):
-        w_lines = get_wrapped_lines(text, max_chars=18) # 預留字元空間給編號
+        w_lines = get_wrapped_lines(text, max_chars=18) 
         lines.append(f"{prefix_num}. {w_lines[0]}")
         for wl in w_lines[1:]:
-            lines.append(f"   {wl}") # 產生 3 個半形空白，完美對齊
+            lines.append(f"   {wl}") 
             
     append_action(1, act1)
     append_action(2, act2)
@@ -206,16 +203,24 @@ def generate_weekly_image(date, dept, start_d, end_d, rev, spend, prod, review, 
     lines.extend(["", "--------------------------------------", f"填寫人：{author}"])
     return render_image(lines, theme_color=(30, 80, 140))
 
+# --- 登入與快取重置介面 ---
 def login_ui(user_df):
     if st.session_state.get("logged_in"): return True
     st.title("IKKON 系統管理登入")
+    
     with st.form("login_form"):
         input_user = st.text_input("帳號名稱")
         input_pwd = st.text_input("密碼", type="password")
         if st.form_submit_button("登入"):
             if user_df is not None and not user_df.empty:
                 user_df['密碼'] = user_df['密碼'].astype(str)
-                match = user_df[(user_df['帳號名稱'] == input_user) & (user_df['密碼'] == input_pwd)]
+                # 清除可能因手動輸入而產生的頭尾空白符號
+                user_df['帳號名稱'] = user_df['帳號名稱'].astype(str).str.strip()
+                user_df['密碼'] = user_df['密碼'].astype(str).str.strip()
+                input_user_clean = input_user.strip()
+                input_pwd_clean = input_pwd.strip()
+                
+                match = user_df[(user_df['帳號名稱'] == input_user_clean) & (user_df['密碼'] == input_pwd_clean)]
                 if not match.empty:
                     user_info = match.iloc[0]
                     st.session_state.update({
@@ -223,25 +228,38 @@ def login_ui(user_df):
                         "user_name": user_info['帳號名稱'], "dept_access": user_info['負責部門']
                     })
                     st.rerun()
-            st.error("帳號或密碼錯誤")
+                else:
+                    st.error("帳號或密碼錯誤。")
+                    
+    # 在表單外新增一個手動清除快取的按鈕，解決在後台直接新增帳號後無法讀取的問題
+    st.write("")
+    if st.button("🔄 無法登入？點此刷新系統資料", use_container_width=True):
+        st.cache_data.clear()
+        st.success("資料已刷新！請重新輸入帳號密碼登入。")
+        st.rerun()
+        
     return False
 
 if login_ui(user_df):
     TARGETS = dict(zip(settings_df['部門'], settings_df['月目標']))
     HOURLY_RATES = dict(zip(settings_df['部門'], settings_df['平均時薪']))
-    is_admin = st.session_state.get("user_role") == "admin"
-    is_ceo = st.session_state.get("user_role") == "ceo"
     
-    is_sunday = datetime.datetime.now().weekday() == 6
+    user_role = st.session_state.get("user_role").lower()
+    
+    # 根據四種不同的權限等級，設定對應的功能選單
+    if user_role == "admin":
+        menu_options = ["營運數據登記", "值班主管週報", "月度損益彙總", "系統後台管理"]
+    elif user_role == "ceo":
+        menu_options = ["月度損益彙總"]
+    elif user_role == "manager":
+        menu_options = ["營運數據登記", "值班主管週報", "月度損益彙總"]
+    else: # 預設為 staff 幹部
+        menu_options = ["營運數據登記", "月度損益彙總"]
 
     with st.sidebar:
         st.title(f"{st.session_state['user_name']}")
-        st.caption(f"權限等級：{st.session_state['user_role'].upper()}")
+        st.caption(f"權限等級：{user_role.upper()}")
         
-        menu_options = ["營運數據登記", "值班主管週報", "月度損益彙總"]
-        if is_admin:
-            menu_options.append("系統後台管理")
-            
         mode = st.radio("功能選單", menu_options)
         
         if st.button("刷新數據"):
@@ -259,7 +277,7 @@ if login_ui(user_df):
         
         with tab_users:
             st.subheader("使用者名單")
-            st.caption("權限等級規範：admin / ceo / staff。負責部門若為全部請填寫 ALL。")
+            st.caption("權限等級規範：admin (管理員) / ceo (執行長) / manager (值班主管) / staff (幹部)。")
             edited_users = st.data_editor(user_df, num_rows="dynamic", use_container_width=True, key="user_editor")
             if st.button("儲存帳號設定", type="primary"):
                 success, msg = db.update_backend_sheet("Users", edited_users)
@@ -328,10 +346,10 @@ if login_ui(user_df):
         p1, p2, p3 = st.columns(3)
         with p1:
             petty_yesterday = st.number_input(
-                "昨日剩 (系統自動帶入)" if not is_admin else "昨日剩 (管理員解鎖模式)", 
+                "昨日剩 (系統自動帶入)" if user_role != "admin" else "昨日剩 (管理員解鎖模式)", 
                 value=last_petty_cash, 
                 step=100, 
-                disabled=not is_admin
+                disabled=(user_role != "admin")
             )
         with p2:
             petty_expense = st.number_input("今日支出", min_value=0, step=100)
@@ -450,17 +468,15 @@ if login_ui(user_df):
             else:
                 st.error(f"報表寫入失敗，請聯絡系統管理員。錯誤訊息：{action}")
 
-    # ==========================================
-    # 全新模組：值班主管週報
-    # ==========================================
     elif mode == "值班主管週報":
         st.title("值班主管週報")
         
-        # 智能判斷跨夜打烊時間 (凌晨 0-5 點視為昨天)
         now = datetime.datetime.now()
         logical_today = now.date()
         if now.hour < 6:
             logical_today = logical_today - datetime.timedelta(days=1)
+        
+        is_sunday = logical_today.weekday() == 6
         
         if is_sunday:
             st.error("⚠️ **今日為系統週報結算日！請值班主管務必於下班前完成本週回報，並下載圖片回報至幹部群組。**")
@@ -473,7 +489,6 @@ if login_ui(user_df):
         st.markdown("##### 選擇結算基準日")
         selected_date = st.date_input("系統會自動抓取此日期「所屬的星期一至星期日」作為本週數據區間", value=logical_today)
         
-        # 依據人工(或智能)選取的日期，去推算週一與週日
         start_of_week = selected_date - datetime.timedelta(days=selected_date.weekday())
         end_of_week = start_of_week + datetime.timedelta(days=6)
         
@@ -538,7 +553,6 @@ if login_ui(user_df):
                 st.error("請確實填寫檢討、人事、商圈觀察，以及【三項行動方針】，不可留白，這才是主管的核心價值。")
             else:
                 new_weekly_row = [
-                    # 統一使用 selected_date 作為該週報的主鍵與儲存時間
                     str(selected_date), department, str(start_of_week), str(end_of_week),
                     int(week_rev), int(week_spend), int(week_prod), 
                     review.strip(), hr_status.strip(), market.strip(), actions_str, 
