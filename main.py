@@ -171,8 +171,8 @@ def generate_ops_image(date, dept, prod, labor, k_hours, f_hours, ops_note, anno
     
     return render_image(lines)
 
-# 新增：生成值班主管週報圖片 (改用深藍色系以區隔日報)
-def generate_weekly_image(date, dept, start_d, end_d, rev, spend, review, hr_status, market, actions, author):
+# 更新：加入產值參數
+def generate_weekly_image(date, dept, start_d, end_d, rev, spend, prod, review, hr_status, market, actions, author):
     lines = [
         "【 IKKON 值班主管週報 】",
         f"回報日：{date} | 分店：{dept}",
@@ -180,7 +180,7 @@ def generate_weekly_image(date, dept, start_d, end_d, rev, spend, review, hr_sta
         "--------------------------------------",
         "[ 本週核心數據 ]",
         f"本週總營收：${rev:,.0f}",
-        f"平均客單價：${spend:,.0f}",
+        f"平均客單價：${spend:,.0f} | 平均工時產值：${prod:,.0f}/hr",
         "",
         "[ 數據與營運檢討 ]"
     ]
@@ -193,7 +193,6 @@ def generate_weekly_image(date, dept, start_d, end_d, rev, spend, review, hr_sta
     lines.extend(get_wrapped_lines(actions))
     lines.extend(["", "--------------------------------------", f"填寫人：{author}"])
     
-    # 傳入藍色主題碼
     return render_image(lines, theme_color=(30, 80, 140))
 
 def login_ui(user_df):
@@ -222,14 +221,12 @@ if login_ui(user_df):
     is_admin = st.session_state.get("user_role") == "admin"
     is_ceo = st.session_state.get("user_role") == "ceo"
     
-    # 星期日判定 (0=週一, 6=週日)
     is_sunday = datetime.datetime.now().weekday() == 6
 
     with st.sidebar:
         st.title(f"{st.session_state['user_name']}")
         st.caption(f"權限等級：{st.session_state['user_role'].upper()}")
         
-        # 增加「值班主管週報」選項
         menu_options = ["營運數據登記", "值班主管週報", "月度損益彙總"]
         if is_admin:
             menu_options.append("系統後台管理")
@@ -448,7 +445,6 @@ if login_ui(user_df):
     elif mode == "值班主管週報":
         st.title("值班主管週報")
         
-        # 視覺化時間防呆提醒
         if is_sunday:
             st.error("⚠️ **今日為系統週報結算日！請值班主管務必於下班前完成本週回報，並下載圖片回報至幹部群組。**")
         else:
@@ -457,79 +453,91 @@ if login_ui(user_df):
         dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
         department = st.selectbox("部門", dept_options)
         
-        # 自動計算本週區間 (預設週一到週日)
         today = datetime.date.today()
         start_of_week = today - datetime.timedelta(days=today.weekday())
         end_of_week = start_of_week + datetime.timedelta(days=6)
         
         st.markdown(f"**統計區間**：`{start_of_week}` 至 `{end_of_week}`")
         
-        # 系統自動抓取並運算本週數據
-        week_rev, week_spend = 0, 0
+        week_rev, week_spend, week_prod = 0, 0, 0
         if report_data:
             df = pd.DataFrame(report_data)
             if not df.empty and '日期' in df.columns:
                 df['日期'] = pd.to_datetime(df['日期'])
-                # 篩選分店與本週區間
                 mask = (df['部門'] == department) & (df['日期'].dt.date >= start_of_week) & (df['日期'].dt.date <= end_of_week)
                 week_df = df.loc[mask].copy()
                 
                 if not week_df.empty:
-                    for col in ['總營業額', '總來客數']:
+                    for col in ['總營業額', '總來客數', '總工時']:
                         week_df[col] = pd.to_numeric(week_df[col], errors='coerce').fillna(0)
                     
                     week_rev = week_df['總營業額'].sum()
                     week_cust = week_df['總來客數'].sum()
+                    week_hrs = week_df['總工時'].sum()
+                    
                     week_spend = week_rev / week_cust if week_cust > 0 else 0
+                    week_prod = week_rev / week_hrs if week_hrs > 0 else 0
                     
                     st.success("已自動載入本週營業數據，請針對下方項目進行深度檢討。")
                 else:
                     st.warning("⚠️ 系統尚未抓取到本週任何日報資料。")
         
-        # 數據鎖定展示區 (不允許手動修改)
-        c1, c2 = st.columns(2)
+        # UI 更新：新增第三格產值顯示
+        c1, c2, c3 = st.columns(3)
         with c1:
             st.metric("本週累計總營收", f"${week_rev:,.0f}")
         with c2:
             st.metric("本週平均客單價", f"${week_spend:,.0f}")
+        with c3:
+            st.metric("本週平均工時產值", f"${week_prod:,.0f}/hr")
 
         st.divider()
         st.subheader("營運深度分析 (請詳細論述)")
         
-        review = st.text_area("1. 數據與營運檢討", placeholder="例：本週業績落後目標 5%，主因為寒流來襲，顧客銳減。但在銷售上成功推出高單價商品，拉高了整體客單價...", height=100)
-        hr_status = st.text_area("2. 團隊與人事狀況", placeholder="例：外場新人 A 培訓進度超前，已可獨立點餐；內場 B 預計下月離職，需盡快徵人遞補...", height=100)
-        market = st.text_area("3. 行銷觀察與改善建議", placeholder="例：顧客對於新推出的A商品相當喜歡，建議可成為常備商品；下週藝文特區有啤酒節，預計會帶來人潮...", height=100)
+        # 利用 Markdown 大標題替代原本較小的標籤
+        st.markdown("##### 1. 數據與營運檢討")
+        review = st.text_area("1. 數據與營運檢討", placeholder="例：本週業績落後目標 5%，主因為寒流來襲，顧客銳減。但在銷售上成功推出高單價商品，拉高了整體客單價...", height=100, label_visibility="collapsed")
         
-        st.markdown("##### 4. 下週行動方針 (請列出具體、可執行的 1-3 項目標)")
-        action_1 = st.text_input("行動一", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。")
-        action_2 = st.text_input("行動二", placeholder="例：調整內場備料方式，縮短出餐時間。")
-        action_3 = st.text_input("行動三", placeholder="例：在週三前會完成聖誕節布置。")
+        st.markdown("##### 2. 團隊與人事狀況")
+        hr_status = st.text_area("2. 團隊與人事狀況", placeholder="例：外場新人 A 培訓進度超前，已可獨立點餐；內場 B 預計下月離職，需盡快徵人遞補...", height=100, label_visibility="collapsed")
         
-        actions_str = f"1. {action_1}\n2. {action_2}\n3. {action_3}".strip()
-        if actions_str == "1. \n2. \n3.":
-            actions_str = "無填寫具體方針"
+        st.markdown("##### 3. 行銷觀察與改善建議")
+        market = st.text_area("3. 行銷觀察與改善建議", placeholder="例：顧客對於新推出的A商品相當喜歡，建議可成為常備商品；下週藝文特區有啤酒節，預計會帶來人潮...", height=100, label_visibility="collapsed")
+        
+        st.markdown("##### 4. 下週行動方針 (請具體列出三項目標)")
+        
+        # 三項行動方針全部改為高度100的文本框，並強制填寫
+        st.markdown("**行動一**")
+        action_1 = st.text_area("行動一", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。", height=100, label_visibility="collapsed")
+        
+        st.markdown("**行動二**")
+        action_2 = st.text_area("行動二", placeholder="例：調整內場備料方式，縮短出餐時間。", height=100, label_visibility="collapsed")
+        
+        st.markdown("**行動三**")
+        action_3 = st.text_area("行動三", placeholder="例：在週三前會完成聖誕節布置。", height=100, label_visibility="collapsed")
+        
+        actions_str = f"1. {action_1.strip()}\n2. {action_2.strip()}\n3. {action_3.strip()}".strip()
 
         if st.button("提交值班主管週報", type="primary", use_container_width=True):
-            if not review.strip() or not hr_status.strip() or not market.strip():
-                st.error("請確實填寫檢討、人事與商圈觀察，不可留白，這才是主管的核心價值。")
+            # 嚴格的防呆機制：6個欄位缺一不可
+            if not review.strip() or not hr_status.strip() or not market.strip() or not action_1.strip() or not action_2.strip() or not action_3.strip():
+                st.error("請確實填寫檢討、人事、商圈觀察，以及【三項行動方針】，不可留白，這才是主管的核心價值。")
             else:
                 new_weekly_row = [
                     str(today), department, str(start_of_week), str(end_of_week),
-                    int(week_rev), int(week_spend),
+                    int(week_rev), int(week_spend), int(week_prod),  # 寫入產值
                     review.strip(), hr_status.strip(), market.strip(), actions_str, 
                     st.session_state['user_name']
                 ]
                 
-                # 寫入專屬的 WeeklyReports 資料表
                 success, action = db.upsert_report("WeeklyReports", str(today), department, new_weekly_row)
                 
                 if success:
                     st.success("週報已成功寫入核心資料庫！")
                     
-                    # 生成專屬藍色系週報圖片
                     weekly_img_bytes = generate_weekly_image(
                         str(today), department, str(start_of_week), str(end_of_week),
-                        week_rev, week_spend, review, hr_status, market, actions_str, st.session_state['user_name']
+                        week_rev, week_spend, week_prod, review, hr_status, market, actions_str, st.session_state['user_name']
                     )
                     
                     st.divider()
@@ -540,7 +548,6 @@ if login_ui(user_df):
                     st.error(f"寫入失敗：{action}")
 
     elif mode == "月度損益彙總":
-        # ...此區塊維持原樣不變...
         st.title("月度財務彙總分析")
         
         if st.session_state['dept_access'] == "ALL":
@@ -697,6 +704,3 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
-
-
-
