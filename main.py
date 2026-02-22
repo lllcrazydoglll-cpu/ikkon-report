@@ -11,7 +11,6 @@ from database import DatabaseManager
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
-# 清理冗餘欄位，目前精簡為 31 欄
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
@@ -19,7 +18,7 @@ SHEET_COLUMNS = [
     "昨日剩", "今日支出", "今日補", "今日剰", 
     "IKKON折抵券", "1000折價券", "總共折抵金",
     "85折使用者", "85折對象", 
-    "營運回報", "客訴分類標籤", "客訴原因與處理結果", "事項宣達" 
+    "營運回報", "客訴分類標籤", "客訴原因與處理結果", "事項宣達"
 ]
 
 SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
@@ -365,7 +364,6 @@ if login_ui(user_df):
         target_diff = month_target - current_month_rev
 
         if st.button("提交報表", type="primary", use_container_width=True):
-            # 拔除「已提交」這個垃圾資料佔位符
             new_row = [
                 str(date), department, 
                 int(cash), int(card), int(remit), int(cash_coupon), rev_memo,
@@ -450,6 +448,25 @@ if login_ui(user_df):
             c3.metric("平均工時產值", f"${m_rev/m_hrs:,.0f}/hr" if m_hrs > 0 else "0")
             
             st.subheader("趨勢與結構分析")
+            
+            # --- 新增：各店當月總營業額快速比較 ---
+            if st.session_state['dept_access'] == "ALL":
+                st.markdown("##### 各分店當月累計營收")
+                dept_totals = filtered_df.groupby('部門')['總營業額'].sum()
+                if not dept_totals.empty:
+                    dept_cols = st.columns(len(dept_totals))
+                    for idx, (dept_name, dept_total) in enumerate(dept_totals.items()):
+                        # 計算該店的目標達成率
+                        dept_target = TARGETS.get(dept_name, 1)
+                        achieve_rate = (dept_total / dept_target) * 100 if dept_target > 0 else 0
+                        dept_cols[idx].metric(
+                            label=f"📍 {dept_name}", 
+                            value=f"${dept_total:,.0f}",
+                            delta=f"達成率：{achieve_rate:.1f}%",
+                            delta_color="normal"
+                        )
+                    st.write("") # 微調間距
+
             chart_df = filtered_df.copy()
             chart_df['日期標籤'] = chart_df['日期'].dt.strftime('%m-%d')
             
