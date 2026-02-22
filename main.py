@@ -2,16 +2,23 @@ import streamlit as st
 import datetime
 import pandas as pd
 import altair as alt
+import os
+import io
+import urllib.request
+import textwrap
+from PIL import Image, ImageDraw, ImageFont
 from database import DatabaseManager
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
+# 🚨 欄位已擴充至 32 欄，請務必確保 Google Sheets 同步更新
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
     "內場工時", "外場工時", "總工時", "平均時薪", "工時產值", "人事成本占比",
     "昨日剩", "今日支出", "今日補", "今日剰", 
     "IKKON折抵券", "1000折價券", "總共折抵金",
+    "85折使用者", "85折對象",  # <--- 新增的兩個欄位
     "營運回報", "客訴分類標籤", "客訴原因說明", "客訴處理結果", "事項宣達"
 ]
 
@@ -25,11 +32,95 @@ def load_cached_data():
 
 user_df, settings_df, report_data = load_cached_data()
 
-# 若資料庫讀取失敗的防呆提醒
 if user_df is None and settings_df is None:
     st.error("系統初始化失敗：無法連接至核心資料庫，請檢查網路連線或授權設定。")
     st.stop()
 
+# --- 圖片生成引擎 (過度配置：內建中文字型下載與排版) ---
+@st.cache_resource
+def get_chinese_font():
+    font_path = "NotoSansCJKtc-Regular.otf"
+    if not os.path.exists(font_path):
+        try:
+            url = "https://raw.githubusercontent.com/googlefonts/noto-cjk/main/Sans/OTF/TraditionalChinese/NotoSansCJKtc-Regular.otf"
+            urllib.request.urlretrieve(url, font_path)
+        except Exception as e:
+            return None
+    try:
+        return ImageFont.truetype(font_path, 28)
+    except:
+        return None
+
+def generate_report_image(date, dept, rev, cust, spend, prod, labor, cash, card, remit, cash_coupon, 
+                          petty_y, petty_e, petty_r, petty_t, ikkon_cp, th_cp, tot_cp, 
+                          emp_user, emp_target, ops_note, announce, tags_str, reason_action, diff, ratio):
+    
+    font = get_chinese_font()
+    if font is None:
+        font = ImageFont.load_default() # 備用字型
+
+    # 組合報表文字內容
+    content = f"""
+    【 IKKON 營運日報 】
+    日期：{date} | 分店：{dept}
+    --------------------------------------
+    [ 營收指標 ]
+    總營業額：${rev:,.0f}
+    總來客數：{cust} 人
+    客單價：${spend:,.0f}
+    距離目標：${diff:,.0f} (目標占比 {ratio*100:.1f}%)
+
+    [ 支付結構 ]
+    現金：${cash:,.0f} | 刷卡：${card:,.0f}
+    匯款：${remit:,.0f} | 現金券：${cash_coupon:,.0f}
+
+    [ 營運指標 ]
+    工時產值：${prod:,.0f}/hr
+    人事占比：{labor*100:.1f}%
+
+    [ 零用金與折抵 ]
+    昨日剩餘：${petty_y:,.0f} | 今日支出：${petty_e:,.0f}
+    今日補充：${petty_r:,.0f} | 今日剰餘：${petty_t:,.0f}
+    IKKON券：${ikkon_cp:,.0f} | 1000折價：${th_cp:,.0f}
+    總折抵金：${tot_cp:,.0f}
+    
+    [ 員工85折優惠權利 ]
+    使用者：{emp_user if emp_user else "無"}
+    對象：{emp_target}
+
+    [ 營運回報 ]
+    {textwrap.fill(ops_note, width=32)}
+
+    [ 事項宣達 ]
+    {textwrap.fill(announce, width=32)}
+
+    [ 客訴處理 ({tags_str}) ]
+    {textwrap.fill(reason_action, width=32)}
+    """
+
+    # 動態計算圖片高度
+    lines = [line.strip() for line in content.strip().split('\n')]
+    img_height = len(lines) * 45 + 80
+    
+    # 建立純白背景圖片
+    img = Image.new('RGB', (650, img_height), color=(250, 250, 250))
+    draw = ImageDraw.Draw(img)
+
+    # 繪製文字
+    y_text = 40
+    for line in lines:
+        if "【" in line or "[" in line:
+            draw.text((40, y_text), line, font=font, fill=(180, 50, 50)) # 標題紅色
+        else:
+            draw.text((40, y_text), line, font=font, fill=(40, 40, 40))  # 內文深灰
+        y_text += 45
+
+    # 轉為位元組流以供下載
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=95)
+    return buf.getvalue()
+
+# --- 介面與登入邏輯 ---
 def login_ui(user_df):
     if st.session_state.get("logged_in"): return True
     st.title("IKKON 系統管理登入")
@@ -163,7 +254,8 @@ if login_ui(user_df):
         petty_today = petty_yesterday - petty_expense + petty_replenish
         st.info(f"今日剰 (自動計算)：${petty_today:,}")
 
-        st.subheader("折價券統計")
+        # --- 更新：折價券與員工優惠統計 ---
+        st.subheader("折價券與員工優惠統計")
         v1, v2 = st.columns(2)
         with v1:
             ikkon_coupon = st.number_input("IKKON折抵券金額", min_value=0, step=100)
@@ -171,6 +263,14 @@ if login_ui(user_df):
             thousand_coupon = st.number_input("1000折價券金額", min_value=0, step=1000)
         
         total_coupon = cash_coupon + ikkon_coupon + thousand_coupon
+        st.caption(f"總共折抵金：${total_coupon:,}")
+
+        st.markdown("##### 員工85折優惠權利")
+        e1, e2 = st.columns(2)
+        with e1:
+            emp_user = st.text_input("使用者 (請輸入姓名)")
+        with e2:
+            emp_target = st.selectbox("對象", ["無", "熟客", "親友", "好客人", "其他"])
 
         st.subheader("營運與客訴回報")
         ops_note = st.text_area("營運狀況回報", height=120)
@@ -200,6 +300,7 @@ if login_ui(user_df):
                 current_month_rev += historical_month_rev
         
         target_ratio = float(current_month_rev / month_target) if month_target > 0 else 0.0
+        target_diff = month_target - current_month_rev
 
         if st.button("提交報表", type="primary", use_container_width=True):
             new_row = [
@@ -211,6 +312,7 @@ if login_ui(user_df):
                 int(avg_rate), int(productivity), f"{labor_ratio*100:.1f}%",
                 int(petty_yesterday), int(petty_expense), int(petty_replenish), int(petty_today),
                 int(ikkon_coupon), int(thousand_coupon), int(total_coupon),
+                emp_user.strip(), emp_target, # 新增的寫入欄位
                 ops_note.strip(), tags_str, reason_action.strip(), "已提交", announcement.strip()
             ]
             
@@ -220,44 +322,33 @@ if login_ui(user_df):
                 action_text = "更新" if action == "updated" else "新增"
                 st.success(f"{date} {department} 的營運報表已成功{action_text}。")
                 st.cache_data.clear()
+                
+                # 背景生成 JPG 圖片
+                img_bytes = generate_report_image(
+                    date, department, total_rev, customers, avg_customer_spend, productivity, labor_ratio, 
+                    cash, card, remit, cash_coupon, petty_yesterday, petty_expense, petty_replenish, petty_today, 
+                    ikkon_coupon, thousand_coupon, total_coupon, emp_user, emp_target, 
+                    ops_note, announcement, tags_str, reason_action, target_diff, target_ratio
+                )
+                
+                # 下載按鈕區塊
+                st.divider()
+                st.markdown("### 📥 報表已生成")
+                st.info("系統已自動將您輸入的數據轉換為標準化圖檔，請點擊下方按鈕下載圖片，並發送至群組回報。")
+                st.download_button(
+                    label="📸 點此下載 JPG 報表",
+                    data=img_bytes,
+                    file_name=f"IKKON_日報_{department}_{date}.jpg",
+                    mime="image/jpeg",
+                    type="primary",
+                    use_container_width=True
+                )
+                st.divider()
             else:
                 st.error(f"報表寫入失敗，請聯絡系統管理員。錯誤訊息：{action}")
-            
-            st.divider()
-            st.markdown(f"### 【營運日報】 {date} | {department}")
-            
-            report_md = f"""
-| 營收指標 | 金額/數據 | 營運指標 | 數據 |
-| :--- | :--- | :--- | :--- |
-| **總營業額** | **${int(total_rev):,.0f}** | **總來客數** | {int(customers)} 人 |
-| 現金 | ${int(cash):,.0f} | 客單價 | ${int(avg_customer_spend):,.0f} |
-| 刷卡 | ${int(card):,.0f} | 工時產值 | ${int(productivity):,.0f}/hr |
-| 匯款 | ${int(remit):,.0f} | 人事占比 | {labor_ratio*100:.1f}% |
-| 現金折價卷 | ${int(cash_coupon):,.0f} | 內/外場工時 | {k_hours} / {f_hours} hr |
-| **距離目標** | **${int(month_target - current_month_rev):,.0f}** | **目標占比** | **{target_ratio*100:.1f}%** |
-
-| 零用金管理 | 金額 | 折抵券結算 | 金額 |
-| :--- | :--- | :--- | :--- |
-| 昨日剩 | ${int(petty_yesterday):,.0f} | IKKON折抵券 | ${int(ikkon_coupon):,.0f} |
-| 今日支出 | ${int(petty_expense):,.0f} | 1000折價券 | ${int(thousand_coupon):,.0f} |
-| 今日補 | ${int(petty_replenish):,.0f} | | |
-| **今日剰** | **${int(petty_today):,.0f}** | **總共折抵金** | **${int(total_coupon):,.0f}** |
-"""
-            st.markdown(report_md)
-            if rev_memo != "無":
-                st.caption(f"**金額備註：** {rev_memo}")
-            st.divider()
-
-            st.subheader("回報文字彙整")
-            
-            st.markdown("##### 預覽區 (同仁確認用)")
-            st.info(f"**【營運回報】**\n\n{ops_note.strip()}\n\n---\n\n**【事項宣達】**\n\n{announcement.strip()}\n\n---\n\n**【客訴處理】** ({tags_str})\n\n{reason_action.strip()}")
-            
-            st.markdown("##### 一鍵複製區 (點擊右上角按鈕)")
-            text_summary = f"【營運回報】\n{ops_note.strip()}\n\n【事項宣達】\n{announcement.strip()}\n\n【客訴處理】({tags_str})\n{reason_action.strip()}"
-            st.code(text_summary, language="text")
 
     elif mode == "月度損益彙總":
+        # ... (下方的月度損益彙總邏輯保持不變，為節省篇幅予以省略，請保留你原有的該段程式碼) ...
         st.title("月度財務彙總分析")
         
         if st.session_state['dept_access'] == "ALL":
