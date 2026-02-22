@@ -24,16 +24,18 @@ SHEET_COLUMNS = [
 SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
 class EnhancedDatabaseManager(DatabaseManager):
-    def upsert_daily_report(self, date_str, department, new_row):
+    def upsert_report(self, sheet_name, date_str, department, new_row):
+        """通用型覆寫寫入邏輯，支援日報與週報"""
         if not self.client: return False, "連線失敗"
         try:
             sh = self.client.open_by_key(self.sid)
-            sheet = sh.worksheet("Sheet1")
+            sheet = sh.worksheet(sheet_name)
             all_values = sheet.get_all_values()
             target_row_idx = None
             
             for i, row in enumerate(all_values):
                 if i == 0: continue
+                # 假設第一欄都是日期，第二欄都是部門
                 if len(row) >= 2 and row[0] == date_str and row[1] == department:
                     target_row_idx = i + 1
                     break
@@ -72,6 +74,7 @@ if user_df is None and settings_df is None:
     st.error("系統初始化失敗：無法連接至核心資料庫，請檢查網路連線或授權設定。")
     st.stop()
 
+# --- 圖片生成引擎與排版邏輯 ---
 @st.cache_resource
 def get_chinese_font():
     font_path = "NotoSansCJKtc-Regular.otf"
@@ -102,7 +105,7 @@ def get_wrapped_lines(text, max_chars=21):
             lines.append(paragraph)
     return lines
 
-def render_image(content_lines):
+def render_image(content_lines, theme_color=(180, 50, 50)):
     font = get_chinese_font()
     if font is None:
         font = ImageFont.load_default()
@@ -114,7 +117,7 @@ def render_image(content_lines):
     y_text = 40
     for line in content_lines:
         if "【" in line or "[" in line:
-            draw.text((40, y_text), line, font=font, fill=(180, 50, 50)) 
+            draw.text((40, y_text), line, font=font, fill=theme_color) 
         else:
             draw.text((40, y_text), line, font=font, fill=(40, 40, 40))  
         y_text += 45
@@ -168,6 +171,31 @@ def generate_ops_image(date, dept, prod, labor, k_hours, f_hours, ops_note, anno
     
     return render_image(lines)
 
+# 新增：生成店長週報圖片 (改用深藍色系以區隔日報)
+def generate_weekly_image(date, dept, start_d, end_d, rev, spend, review, hr_status, market, actions, author):
+    lines = [
+        "【 IKKON 店長營運週報 】",
+        f"回報日：{date} | 分店：{dept}",
+        f"統計區間：{start_d} 至 {end_d}",
+        "--------------------------------------",
+        "[ 本週核心數據 ]",
+        f"本週總營收：${rev:,.0f}",
+        f"平均客單價：${spend:,.0f}",
+        "",
+        "[ 數據與營運覆盤 ]"
+    ]
+    lines.extend(get_wrapped_lines(review))
+    lines.extend(["", "[ 團隊與人事狀況 ]"])
+    lines.extend(get_wrapped_lines(hr_status))
+    lines.extend(["", "[ 商圈與競品觀察 ]"])
+    lines.extend(get_wrapped_lines(market))
+    lines.extend(["", "[ 下週行動方針 ]"])
+    lines.extend(get_wrapped_lines(actions))
+    lines.extend(["", "--------------------------------------", f"填寫人：{author}"])
+    
+    # 傳入藍色主題碼
+    return render_image(lines, theme_color=(30, 80, 140))
+
 def login_ui(user_df):
     if st.session_state.get("logged_in"): return True
     st.title("IKKON 系統管理登入")
@@ -193,12 +221,16 @@ if login_ui(user_df):
     HOURLY_RATES = dict(zip(settings_df['部門'], settings_df['平均時薪']))
     is_admin = st.session_state.get("user_role") == "admin"
     is_ceo = st.session_state.get("user_role") == "ceo"
+    
+    # 星期日判定 (0=週一, 6=週日)
+    is_sunday = datetime.datetime.now().weekday() == 6
 
     with st.sidebar:
         st.title(f"{st.session_state['user_name']}")
         st.caption(f"權限等級：{st.session_state['user_role'].upper()}")
         
-        menu_options = ["數據登記", "月度損益彙總"]
+        # 增加「店長營運週報」選項
+        menu_options = ["營運數據登記", "店長營運週報", "月度損益彙總"]
         if is_admin:
             menu_options.append("系統後台管理")
             
@@ -240,7 +272,7 @@ if login_ui(user_df):
                 else:
                     st.error(f"寫入失敗：{msg}")
 
-    elif mode == "數據登記":
+    elif mode == "營運數據登記":
         st.title("營運數據登記")
         dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
         department = st.selectbox("部門", dept_options)
@@ -377,7 +409,7 @@ if login_ui(user_df):
                 ops_note.strip(), tags_str, reason_action.strip(), announcement.strip() 
             ]
             
-            success, action = db.upsert_daily_report(str(date), department, new_row)
+            success, action = db.upsert_report("Sheet1", str(date), department, new_row)
             
             if success:
                 action_text = "更新" if action == "updated" else "新增"
@@ -410,7 +442,105 @@ if login_ui(user_df):
             else:
                 st.error(f"報表寫入失敗，請聯絡系統管理員。錯誤訊息：{action}")
 
+    # ==========================================
+    # 全新模組：店長營運週報
+    # ==========================================
+    elif mode == "店長營運週報":
+        st.title("店長營運週報")
+        
+        # 視覺化時間防呆提醒
+        if is_sunday:
+            st.error("⚠️ **今日為系統週報結算日！請店長務必於下班前完成本週覆盤，並下載圖片回報至群組。**")
+        else:
+            st.info("💡 系統建議：請於每週日進行週報結算，以掌握最完整的單週營運趨勢。")
+
+        dept_options = list(TARGETS.keys()) if st.session_state['dept_access'] == "ALL" else [st.session_state['dept_access']]
+        department = st.selectbox("部門", dept_options)
+        
+        # 自動計算本週區間 (預設週一到週日)
+        today = datetime.date.today()
+        start_of_week = today - datetime.timedelta(days=today.weekday())
+        end_of_week = start_of_week + datetime.timedelta(days=6)
+        
+        st.markdown(f"**統計區間**：`{start_of_week}` 至 `{end_of_week}`")
+        
+        # 系統自動抓取並運算本週數據
+        week_rev, week_spend = 0, 0
+        if report_data:
+            df = pd.DataFrame(report_data)
+            if not df.empty and '日期' in df.columns:
+                df['日期'] = pd.to_datetime(df['日期'])
+                # 篩選分店與本週區間
+                mask = (df['部門'] == department) & (df['日期'].dt.date >= start_of_week) & (df['日期'].dt.date <= end_of_week)
+                week_df = df.loc[mask].copy()
+                
+                if not week_df.empty:
+                    for col in ['總營業額', '總來客數']:
+                        week_df[col] = pd.to_numeric(week_df[col], errors='coerce').fillna(0)
+                    
+                    week_rev = week_df['總營業額'].sum()
+                    week_cust = week_df['總來客數'].sum()
+                    week_spend = week_rev / week_cust if week_cust > 0 else 0
+                    
+                    st.success("✅ 已自動載入本週營業數據，請針對下方項目進行深度覆盤。")
+                else:
+                    st.warning("⚠️ 系統尚未抓取到本週任何日報資料。")
+        
+        # 數據鎖定展示區 (不允許手動修改)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.metric("本週累計總營收", f"${week_rev:,.0f}")
+        with c2:
+            st.metric("本週平均客單價", f"${week_spend:,.0f}")
+
+        st.divider()
+        st.subheader("營運深度分析 (請詳細論述)")
+        
+        review = st.text_area("1. 數據與營運覆盤", placeholder="例：本週營收落後目標 5%，主因為週二雨天客數驟減。但週末推銷高單價清酒成功，拉高了整體客單價...", height=100)
+        hr_status = st.text_area("2. 團隊與人事狀況", placeholder="例：外場新人 A 培訓進度超前，已可獨立點餐；內場 B 預計下月離職，需盡快啟動招募...", height=100)
+        market = st.text_area("3. 商圈與競品觀察", placeholder="例：隔壁新開了平價鐵板燒，可能會吸走部分過路客；下週藝文特區有市集活動，預計會帶來人潮...", height=100)
+        
+        st.markdown("##### 4. 下週行動方針 (請列出具體、可執行的 1-3 項目標)")
+        action_1 = st.text_input("行動一", placeholder="例：針對新人 A 進行高單價肉品推銷術驗收。")
+        action_2 = st.text_input("行動二", placeholder="例：調整內場備料動線，縮短出餐時間。")
+        action_3 = st.text_input("行動三", placeholder="例：聯絡行銷部確認下個月的檔期活動圖檔。")
+        
+        actions_str = f"1. {action_1}\n2. {action_2}\n3. {action_3}".strip()
+        if actions_str == "1. \n2. \n3.":
+            actions_str = "無填寫具體方針"
+
+        if st.button("提交店長週報", type="primary", use_container_width=True):
+            if not review.strip() or not hr_status.strip() or not market.strip():
+                st.error("請確實填寫覆盤、人事與商圈觀察，不可留白。這正是經理人的核心價值。")
+            else:
+                new_weekly_row = [
+                    str(today), department, str(start_of_week), str(end_of_week),
+                    int(week_rev), int(week_spend),
+                    review.strip(), hr_status.strip(), market.strip(), actions_str, 
+                    st.session_state['user_name']
+                ]
+                
+                # 寫入專屬的 WeeklyReports 資料表
+                success, action = db.upsert_report("WeeklyReports", str(today), department, new_weekly_row)
+                
+                if success:
+                    st.success("週報已成功寫入核心資料庫！")
+                    
+                    # 生成專屬藍色系週報圖片
+                    weekly_img_bytes = generate_weekly_image(
+                        str(today), department, str(start_of_week), str(end_of_week),
+                        week_rev, week_spend, review, hr_status, market, actions_str, st.session_state['user_name']
+                    )
+                    
+                    st.divider()
+                    st.markdown("### 📥 週報已生成")
+                    st.info("請長按圖片儲存，並發送至管理群組完成本週匯報。")
+                    st.image(weekly_img_bytes, use_container_width=True)
+                else:
+                    st.error(f"寫入失敗：{action}")
+
     elif mode == "月度損益彙總":
+        # ...此區塊維持原樣不變...
         st.title("月度財務彙總分析")
         
         if st.session_state['dept_access'] == "ALL":
@@ -449,14 +579,12 @@ if login_ui(user_df):
             
             st.subheader("趨勢與結構分析")
             
-            # --- 新增：各店當月總營業額快速比較 ---
             if st.session_state['dept_access'] == "ALL":
                 st.markdown("##### 各分店當月累計營收")
                 dept_totals = filtered_df.groupby('部門')['總營業額'].sum()
                 if not dept_totals.empty:
                     dept_cols = st.columns(len(dept_totals))
                     for idx, (dept_name, dept_total) in enumerate(dept_totals.items()):
-                        # 計算該店的目標達成率
                         dept_target = TARGETS.get(dept_name, 1)
                         achieve_rate = (dept_total / dept_target) * 100 if dept_target > 0 else 0
                         dept_cols[idx].metric(
@@ -465,7 +593,7 @@ if login_ui(user_df):
                             delta=f"達成率：{achieve_rate:.1f}%",
                             delta_color="normal"
                         )
-                    st.write("") # 微調間距
+                    st.write("") 
 
             chart_df = filtered_df.copy()
             chart_df['日期標籤'] = chart_df['日期'].dt.strftime('%m-%d')
