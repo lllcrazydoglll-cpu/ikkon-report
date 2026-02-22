@@ -469,7 +469,7 @@ if login_ui(user_df):
                 
                 col_img1, col_img2 = st.columns(2)
                 with col_img1:
-                    st.markdown("**財務日報 (提供會計群組)**")
+                    st.markdown("**財務日報 (提供財務群組)**")
                     st.image(finance_img_bytes, use_container_width=True)
                 with col_img2:
                     st.markdown("**營運日報 (提供現場群組)**")
@@ -744,3 +744,4 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
+
