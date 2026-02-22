@@ -511,7 +511,6 @@ if login_ui(user_df):
         st.divider()
         st.subheader("營運深度分析 (請詳細論述)")
         
-        # 利用 Markdown 加大字體，消滅原本過小的淺色標籤
         st.markdown("**1. 數據與營運檢討**")
         review = st.text_area("1", placeholder="例：本週業績落後目標 5%，主因為寒流來襲，顧客銳減。但在銷售上成功推出高單價商品，拉高了整體客單價...", height=100, label_visibility="collapsed")
         
@@ -523,7 +522,6 @@ if login_ui(user_df):
         
         st.markdown("**4. 下週行動方針 (請具體列出三項目標)**")
         
-        # 高度全面統一為 100
         st.markdown("**行動一**")
         action_1 = st.text_area("a1", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。", height=100, label_visibility="collapsed")
         
@@ -540,19 +538,20 @@ if login_ui(user_df):
                 st.error("請確實填寫檢討、人事、商圈觀察，以及【三項行動方針】，不可留白，這才是主管的核心價值。")
             else:
                 new_weekly_row = [
-                    str(today), department, str(start_of_week), str(end_of_week),
+                    # 統一使用 selected_date 作為該週報的主鍵與儲存時間
+                    str(selected_date), department, str(start_of_week), str(end_of_week),
                     int(week_rev), int(week_spend), int(week_prod), 
                     review.strip(), hr_status.strip(), market.strip(), actions_str, 
                     st.session_state['user_name']
                 ]
                 
-                success, action = db.upsert_report("WeeklyReports", str(today), department, new_weekly_row)
+                success, action = db.upsert_report("WeeklyReports", str(selected_date), department, new_weekly_row)
                 
                 if success:
                     st.success("週報已成功寫入核心資料庫！")
                     
                     weekly_img_bytes = generate_weekly_image(
-                        str(today), department, str(start_of_week), str(end_of_week),
+                        str(selected_date), department, str(start_of_week), str(end_of_week),
                         week_rev, week_spend, week_prod, review, hr_status, market, 
                         action_1.strip(), action_2.strip(), action_3.strip(), st.session_state['user_name']
                     )
