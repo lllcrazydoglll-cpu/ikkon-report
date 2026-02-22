@@ -482,7 +482,7 @@ if login_ui(user_df):
                     week_cust = week_df['總來客數'].sum()
                     week_spend = week_rev / week_cust if week_cust > 0 else 0
                     
-                    st.success("✅ 已自動載入本週營業數據，請針對下方項目進行深度覆盤。")
+                    st.success("已自動載入本週營業數據，請針對下方項目進行深度檢討。")
                 else:
                     st.warning("⚠️ 系統尚未抓取到本週任何日報資料。")
         
@@ -697,5 +697,6 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
+
 
 
