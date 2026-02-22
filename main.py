@@ -208,34 +208,54 @@ def login_ui(user_df):
     if st.session_state.get("logged_in"): return True
     st.title("IKKON 系統管理登入")
     
+    # --- 【系統透視鏡】幫助執行長確認資料庫連線狀態 ---
+    if user_df is not None and not user_df.empty:
+        try:
+            account_list = user_df['帳號名稱'].astype(str).tolist()
+            st.caption(f"🔧 系統透視鏡：目前成功讀取到 {len(account_list)} 個帳號。名單：{', '.join(account_list)}")
+        except Exception as e:
+            st.caption("🔧 系統透視鏡：無法讀取帳號欄位，請確認 Google Sheets 標題是否為『帳號名稱』與『密碼』。")
+    else:
+        st.warning("⚠️ 系統未能從 Google Sheets 讀取到任何使用者資料。")
+
     with st.form("login_form"):
         input_user = st.text_input("帳號名稱")
         input_pwd = st.text_input("密碼", type="password")
         if st.form_submit_button("登入"):
             if user_df is not None and not user_df.empty:
-                user_df['密碼'] = user_df['密碼'].astype(str)
-                # 清除可能因手動輸入而產生的頭尾空白符號
-                user_df['帳號名稱'] = user_df['帳號名稱'].astype(str).str.strip()
-                user_df['密碼'] = user_df['密碼'].astype(str).str.strip()
-                input_user_clean = input_user.strip()
-                input_pwd_clean = input_pwd.strip()
+                # --- 終極暴力清洗邏輯 ---
+                # 1. 強制轉為字串
+                # 2. 清除純數字被加上 .0 的浮點數問題 (正則表達式)
+                # 3. 清除頭尾所有隱藏空白
+                user_df['帳號名稱_clean'] = user_df['帳號名稱'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                user_df['密碼_clean'] = user_df['密碼'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                 
-                match = user_df[(user_df['帳號名稱'] == input_user_clean) & (user_df['密碼'] == input_pwd_clean)]
+                input_user_clean = str(input_user).strip()
+                input_pwd_clean = str(input_pwd).strip()
+                
+                match = user_df[(user_df['帳號名稱_clean'] == input_user_clean) & (user_df['密碼_clean'] == input_pwd_clean)]
                 if not match.empty:
                     user_info = match.iloc[0]
+                    
+                    # 確保權限與部門不會因為空白導致後續選單出錯
+                    safe_role = str(user_info.get('權限等級', 'staff')).strip().lower()
+                    safe_dept = str(user_info.get('負責部門', '')).strip()
+                    
                     st.session_state.update({
-                        "logged_in": True, "user_role": user_info['權限等級'], 
-                        "user_name": user_info['帳號名稱'], "dept_access": user_info['負責部門']
+                        "logged_in": True, 
+                        "user_role": safe_role, 
+                        "user_name": str(user_info['帳號名稱']).strip(), 
+                        "dept_access": safe_dept
                     })
                     st.rerun()
                 else:
-                    st.error("帳號或密碼錯誤。")
+                    st.error("❌ 帳號或密碼錯誤。請注意大小寫，並確保無輸入多餘空白。")
                     
-    # 在表單外新增一個手動清除快取的按鈕，解決在後台直接新增帳號後無法讀取的問題
+    # 在表單外新增手動清除快取的按鈕
     st.write("")
     if st.button("🔄 無法登入？點此刷新系統資料", use_container_width=True):
         st.cache_data.clear()
-        st.success("資料已刷新！請重新輸入帳號密碼登入。")
+        st.success("資料已重新從 Google Sheets 抓取！請查看上方『系統透視鏡』是否有您新增的帳號。")
         st.rerun()
         
     return False
@@ -734,3 +754,4 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
+
