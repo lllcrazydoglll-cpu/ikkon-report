@@ -501,9 +501,9 @@ if login_ui(user_df):
         market = st.text_area("3. 行銷觀察與改善建議", placeholder="例：顧客對於新推出的A商品相當喜歡，建議可成為常備商品；下週藝文特區有啤酒節，預計會帶來人潮...", height=100)
         
         st.markdown("##### 4. 下週行動方針 (請列出具體、可執行的 1-3 項目標)")
-        action_1 = st.text_input("行動一", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。", height=100)
-        action_2 = st.text_input("行動二", placeholder="例：調整內場備料方式，縮短出餐時間。", height=100)
-        action_3 = st.text_input("行動三", placeholder="例：在週三前會完成聖誕節布置。", height=100)
+        action_1 = st.text_input("行動一", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。")
+        action_2 = st.text_input("行動二", placeholder="例：調整內場備料方式，縮短出餐時間。")
+        action_3 = st.text_input("行動三", placeholder="例：在週三前會完成聖誕節布置。")
         
         actions_str = f"1. {action_1}\n2. {action_2}\n3. {action_3}".strip()
         if actions_str == "1. \n2. \n3.":
@@ -697,4 +697,5 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
+
 
