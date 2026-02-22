@@ -5,6 +5,7 @@ import altair as alt
 import os
 import io
 import urllib.request
+import textwrap
 from PIL import Image, ImageDraw, ImageFont
 from database import DatabaseManager
 
@@ -22,7 +23,47 @@ SHEET_COLUMNS = [
 
 SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
-db = DatabaseManager(SID, st.secrets)
+# 覆寫並強化 DatabaseManager 中的 upsert_daily_report 以解決欄位擴充更新問題
+class EnhancedDatabaseManager(DatabaseManager):
+    def upsert_daily_report(self, date_str, department, new_row):
+        if not self.client: return False, "連線失敗"
+        try:
+            sh = self.client.open_by_key(self.sid)
+            sheet = sh.worksheet("Sheet1")
+            all_values = sheet.get_all_values()
+            target_row_idx = None
+            
+            for i, row in enumerate(all_values):
+                if i == 0: continue
+                if len(row) >= 2 and row[0] == date_str and row[1] == department:
+                    target_row_idx = i + 1
+                    break
+            
+            if target_row_idx:
+                # 動態計算結束欄位的英文字母 (例如 32 -> AF)
+                def get_col_letter(col_idx):
+                    letter = ''
+                    while col_idx > 0:
+                        col_idx, remainder = divmod(col_idx - 1, 26)
+                        letter = chr(65 + remainder) + letter
+                    return letter
+                
+                end_col = get_col_letter(len(new_row))
+                cell_list = sheet.range(f"A{target_row_idx}:{end_col}{target_row_idx}")
+                
+                for j, cell in enumerate(cell_list):
+                    if j < len(new_row):
+                        cell.value = new_row[j]
+                sheet.update_cells(cell_list)
+                return True, "updated"
+            else:
+                sheet.append_row(new_row)
+                return True, "inserted"
+        except Exception as e:
+            return False, str(e)
+
+# 實例化強化版資料庫管理器
+db = EnhancedDatabaseManager(SID, st.secrets)
 
 @st.cache_data(ttl=300)
 def load_cached_data():
@@ -89,8 +130,7 @@ def render_image(content_lines):
     return buf.getvalue()
 
 def generate_finance_image(date, dept, rev, cust, spend, diff, ratio, cash, card, remit, cash_coupon, 
-                           petty_y, petty_e, petty_r, petty_t, ikkon_cp, th_cp, tot_cp, emp_user, emp_target):
-    
+                           petty_y, petty_e, petty_r, petty_t, ikkon_cp, th_cp, tot_cp, emp_display_str):
     lines = [
         "【 IKKON 財務日報 】",
         f"日期：{date} | 分店：{dept}",
@@ -111,8 +151,9 @@ def generate_finance_image(date, dept, rev, cust, spend, diff, ratio, cash, card
         "[ 行銷與折扣 ]",
         f"IKKON券：${ikkon_cp:,.0f} | 1000折價：${th_cp:,.0f}",
         f"總折抵金：${tot_cp:,.0f}",
-        f"員工85折：{emp_user if emp_user else '無'} ({emp_target})"
     ]
+    # 利用自動換行引擎處理多個折扣名單可能過長的問題
+    lines.extend(get_wrapped_lines(f"員工85折：{emp_display_str}"))
     return render_image(lines)
 
 def generate_ops_image(date, dept, prod, labor, k_hours, f_hours, ops_note, announce, tags_str, reason_action):
@@ -255,7 +296,7 @@ if login_ui(user_df):
         p1, p2, p3 = st.columns(3)
         with p1:
             petty_yesterday = st.number_input(
-                "昨日剩 (系統自動帶入)" if not is_admin else "昨日剩 (解鎖模式)", 
+                "昨日剩 (系統自動帶入)" if not is_admin else "昨日剩 (管理員解鎖模式)", 
                 value=last_petty_cash, 
                 step=100, 
                 disabled=not is_admin
@@ -278,12 +319,31 @@ if login_ui(user_df):
         total_coupon = cash_coupon + ikkon_coupon + thousand_coupon
         st.caption(f"總共折抵金：${total_coupon:,}")
 
-        st.markdown("##### 員工85折優惠權利")
-        e1, e2 = st.columns(2)
-        with e1:
-            emp_user = st.text_input("使用者 (請輸入姓名)")
-        with e2:
-            emp_target = st.selectbox("對象", ["無", "熟客", "親友", "好客人", "其他"])
+        # --- 更新：支援多人輸入的 85 折優惠區塊 ---
+        st.markdown("##### 員工85折優惠權利 (當日若有多人使用，請依序填寫)")
+        discount_users = []
+        discount_targets = []
+        discount_displays = []
+
+        # 提供 3 組插槽，足以應付絕大部分的單日現場狀況
+        for i in range(1, 4):
+            e1, e2 = st.columns(2)
+            with e1:
+                u = st.text_input(f"使用者 {i} (請輸入姓名)", key=f"emp_u_{i}")
+            with e2:
+                t = st.selectbox(f"對象 {i}", ["無", "熟客", "親友", "好客人", "其他"], key=f"emp_t_{i}")
+            
+            # 若有輸入使用者，進行自動組合
+            if u.strip():
+                display_t = t if t != "無" else "未指定"
+                discount_users.append(u.strip())
+                discount_targets.append(display_t)
+                discount_displays.append(f"{u.strip()} ({display_t})")
+
+        # 將陣列轉換為寫入資料庫所需的字串格式
+        emp_user_str = "、".join(discount_users) if discount_users else "無"
+        emp_target_str = "、".join(discount_targets) if discount_targets else "無"
+        emp_display_str = "、".join(discount_displays) if discount_displays else "無"
 
         st.subheader("營運與客訴回報")
         ops_note = st.text_area("營運狀況回報", height=120)
@@ -325,7 +385,7 @@ if login_ui(user_df):
                 int(avg_rate), int(productivity), f"{labor_ratio*100:.1f}%",
                 int(petty_yesterday), int(petty_expense), int(petty_replenish), int(petty_today),
                 int(ikkon_coupon), int(thousand_coupon), int(total_coupon),
-                emp_user.strip(), emp_target, 
+                emp_user_str, emp_target_str, # 自動寫入多筆字串
                 ops_note.strip(), tags_str, reason_action.strip(), "已提交", announcement.strip()
             ]
             
@@ -339,7 +399,7 @@ if login_ui(user_df):
                 finance_img_bytes = generate_finance_image(
                     date, department, total_rev, customers, avg_customer_spend, target_diff, target_ratio,
                     cash, card, remit, cash_coupon, petty_yesterday, petty_expense, petty_replenish, petty_today,
-                    ikkon_coupon, thousand_coupon, total_coupon, emp_user, emp_target
+                    ikkon_coupon, thousand_coupon, total_coupon, emp_display_str
                 )
                 
                 ops_img_bytes = generate_ops_image(
@@ -363,6 +423,7 @@ if login_ui(user_df):
                 st.error(f"報表寫入失敗，請聯絡系統管理員。錯誤訊息：{action}")
 
     elif mode == "月度損益彙總":
+        # ...下方的月度損益彙總保持不變...
         st.title("月度財務彙總分析")
         
         if st.session_state['dept_access'] == "ALL":
