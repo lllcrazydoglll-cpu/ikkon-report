@@ -11,6 +11,7 @@ from database import DatabaseManager
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
+# 清理冗餘欄位，目前精簡為 31 欄
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
@@ -18,12 +19,11 @@ SHEET_COLUMNS = [
     "昨日剩", "今日支出", "今日補", "今日剰", 
     "IKKON折抵券", "1000折價券", "總共折抵金",
     "85折使用者", "85折對象", 
-    "營運回報", "客訴分類標籤", "客訴原因說明", "客訴處理結果", "事項宣達"
+    "營運回報", "客訴分類標籤", "客訴原因與處理結果", "事項宣達" 
 ]
 
 SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
-# 覆寫並強化 DatabaseManager 中的 upsert_daily_report 以解決欄位擴充更新問題
 class EnhancedDatabaseManager(DatabaseManager):
     def upsert_daily_report(self, date_str, department, new_row):
         if not self.client: return False, "連線失敗"
@@ -40,7 +40,6 @@ class EnhancedDatabaseManager(DatabaseManager):
                     break
             
             if target_row_idx:
-                # 動態計算結束欄位的英文字母 (例如 32 -> AF)
                 def get_col_letter(col_idx):
                     letter = ''
                     while col_idx > 0:
@@ -62,7 +61,6 @@ class EnhancedDatabaseManager(DatabaseManager):
         except Exception as e:
             return False, str(e)
 
-# 實例化強化版資料庫管理器
 db = EnhancedDatabaseManager(SID, st.secrets)
 
 @st.cache_data(ttl=300)
@@ -75,7 +73,6 @@ if user_df is None and settings_df is None:
     st.error("系統初始化失敗：無法連接至核心資料庫，請檢查網路連線或授權設定。")
     st.stop()
 
-# --- 圖片生成引擎與排版邏輯 ---
 @st.cache_resource
 def get_chinese_font():
     font_path = "NotoSansCJKtc-Regular.otf"
@@ -91,7 +88,6 @@ def get_chinese_font():
         return None
 
 def get_wrapped_lines(text, max_chars=21):
-    """將長文字依據最大字元數強制截斷換行，確保中文排版不超框"""
     if not text:
         return ["無"]
     lines = []
@@ -108,7 +104,6 @@ def get_wrapped_lines(text, max_chars=21):
     return lines
 
 def render_image(content_lines):
-    """依據文字行數動態計算圖片高度並渲染"""
     font = get_chinese_font()
     if font is None:
         font = ImageFont.load_default()
@@ -152,7 +147,6 @@ def generate_finance_image(date, dept, rev, cust, spend, diff, ratio, cash, card
         f"IKKON券：${ikkon_cp:,.0f} | 1000折價：${th_cp:,.0f}",
         f"總折抵金：${tot_cp:,.0f}",
     ]
-    # 利用自動換行引擎處理多個折扣名單可能過長的問題
     lines.extend(get_wrapped_lines(f"員工85折：{emp_display_str}"))
     return render_image(lines)
 
@@ -175,7 +169,6 @@ def generate_ops_image(date, dept, prod, labor, k_hours, f_hours, ops_note, anno
     
     return render_image(lines)
 
-# --- 介面與登入邏輯 ---
 def login_ui(user_df):
     if st.session_state.get("logged_in"): return True
     st.title("IKKON 系統管理登入")
@@ -319,13 +312,11 @@ if login_ui(user_df):
         total_coupon = cash_coupon + ikkon_coupon + thousand_coupon
         st.caption(f"總共折抵金：${total_coupon:,}")
 
-        # --- 更新：支援多人輸入的 85 折優惠區塊 ---
         st.markdown("##### 員工85折優惠權利 (當日若有多人使用，請依序填寫)")
         discount_users = []
         discount_targets = []
         discount_displays = []
 
-        # 提供 3 組插槽，足以應付絕大部分的單日現場狀況
         for i in range(1, 4):
             e1, e2 = st.columns(2)
             with e1:
@@ -333,14 +324,12 @@ if login_ui(user_df):
             with e2:
                 t = st.selectbox(f"對象 {i}", ["無", "熟客", "親友", "好客人", "其他"], key=f"emp_t_{i}")
             
-            # 若有輸入使用者，進行自動組合
             if u.strip():
                 display_t = t if t != "無" else "未指定"
                 discount_users.append(u.strip())
                 discount_targets.append(display_t)
                 discount_displays.append(f"{u.strip()} ({display_t})")
 
-        # 將陣列轉換為寫入資料庫所需的字串格式
         emp_user_str = "、".join(discount_users) if discount_users else "無"
         emp_target_str = "、".join(discount_targets) if discount_targets else "無"
         emp_display_str = "、".join(discount_displays) if discount_displays else "無"
@@ -376,6 +365,7 @@ if login_ui(user_df):
         target_diff = month_target - current_month_rev
 
         if st.button("提交報表", type="primary", use_container_width=True):
+            # 拔除「已提交」這個垃圾資料佔位符
             new_row = [
                 str(date), department, 
                 int(cash), int(card), int(remit), int(cash_coupon), rev_memo,
@@ -385,8 +375,8 @@ if login_ui(user_df):
                 int(avg_rate), int(productivity), f"{labor_ratio*100:.1f}%",
                 int(petty_yesterday), int(petty_expense), int(petty_replenish), int(petty_today),
                 int(ikkon_coupon), int(thousand_coupon), int(total_coupon),
-                emp_user_str, emp_target_str, # 自動寫入多筆字串
-                ops_note.strip(), tags_str, reason_action.strip(), "已提交", announcement.strip()
+                emp_user_str, emp_target_str, 
+                ops_note.strip(), tags_str, reason_action.strip(), announcement.strip() 
             ]
             
             success, action = db.upsert_daily_report(str(date), department, new_row)
@@ -423,7 +413,6 @@ if login_ui(user_df):
                 st.error(f"報表寫入失敗，請聯絡系統管理員。錯誤訊息：{action}")
 
     elif mode == "月度損益彙總":
-        # ...下方的月度損益彙總保持不變...
         st.title("月度財務彙總分析")
         
         if st.session_state['dept_access'] == "ALL":
