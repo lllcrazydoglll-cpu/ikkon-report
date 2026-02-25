@@ -11,8 +11,9 @@ from database import DatabaseManager
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
+# 更新欄位定義：新增 訂金收入 與 沒收訂金
 SHEET_COLUMNS = [
-    "日期", "部門", "現金", "刷卡", "匯款", "現金折價卷", "金額備註",
+    "日期", "部門", "現金", "刷卡", "匯款", "訂金收入", "沒收訂金", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
     "內場工時", "外場工時", "總工時", "平均時薪", "工時產值", "人事成本占比",
     "昨日剩", "今日支出", "今日補", "今日剰", 
@@ -25,6 +26,7 @@ SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
 class EnhancedDatabaseManager(DatabaseManager):
     def upsert_report(self, sheet_name, date_str, department, new_row):
+        """通用型覆寫寫入邏輯，支援日報與週報"""
         if not self.client: return False, "連線失敗"
         try:
             sh = self.client.open_by_key(self.sid)
@@ -34,6 +36,7 @@ class EnhancedDatabaseManager(DatabaseManager):
             
             for i, row in enumerate(all_values):
                 if i == 0: continue
+                # 假設第一欄都是日期，第二欄都是部門
                 if len(row) >= 2 and row[0] == date_str and row[1] == department:
                     target_row_idx = i + 1
                     break
@@ -126,7 +129,8 @@ def render_image(content_lines, theme_color=(180, 50, 50)):
     img.save(buf, format="JPEG", quality=95)
     return buf.getvalue()
 
-def generate_finance_image(date, dept, rev, cust, spend, diff, ratio, cash, card, remit, cash_coupon, 
+# 更新圖片生成邏輯：加入訂金與沒收訂金
+def generate_finance_image(date, dept, rev, cust, spend, diff, ratio, cash, card, remit, deposit, forfeit, cash_coupon, 
                            petty_y, petty_e, petty_r, petty_t, ikkon_cp, th_cp, tot_cp, emp_display_str):
     lines = [
         "【 IKKON 財務日報 】",
@@ -139,7 +143,8 @@ def generate_finance_image(date, dept, rev, cust, spend, diff, ratio, cash, card
         "",
         "[ 支付結構 ]",
         f"現金：${cash:,.0f} | 刷卡：${card:,.0f}",
-        f"匯款：${remit:,.0f} | 現金券：${cash_coupon:,.0f}",
+        f"匯款：${remit:,.0f} | 訂金：${deposit:,.0f}",
+        f"沒收：${forfeit:,.0f} | 現金券：${cash_coupon:,.0f}",
         "",
         "[ 零用金結算 ]",
         f"昨日剩餘：${petty_y:,.0f} | 今日支出：${petty_e:,.0f}",
@@ -212,7 +217,6 @@ def login_ui(user_df):
         input_pwd = st.text_input("密碼", type="password")
         if st.form_submit_button("登入"):
             if user_df is not None and not user_df.empty:
-                # 終極防呆：強制將欄位標題與內容的所有隱形空白全部刪除
                 user_df.columns = user_df.columns.astype(str).str.strip()
                 
                 if '帳號名稱' in user_df.columns and '密碼' in user_df.columns:
@@ -256,7 +260,6 @@ if login_ui(user_df):
     
     user_role = st.session_state.get("user_role").lower()
     
-    # 根據四種不同的權限等級，設定對應的功能選單
     if user_role == "admin":
         menu_options = ["營運數據登記", "值班主管週報", "月度損益彙總", "系統後台管理"]
     elif user_role == "ceo":
@@ -329,14 +332,22 @@ if login_ui(user_df):
                         last_petty_cash = int(float(last_value))
 
         st.subheader("營收數據")
-        c1, c2, c3, c4 = st.columns(4)
+        
+        # 修改為兩列，每列三個，容納新增的欄位
+        c1, c2, c3 = st.columns(3)
         with c1:
             cash = st.number_input("現金收入", min_value=0, step=100)
         with c2:
             card = st.number_input("刷卡收入", min_value=0, step=100)
         with c3:
             remit = st.number_input("匯款收入", min_value=0, step=100)
+            
+        c4, c5, c6 = st.columns(3)
         with c4:
+            deposit = st.number_input("訂金收入", min_value=0, step=100)
+        with c5:
+            forfeit = st.number_input("沒收訂金", min_value=0, step=100)
+        with c6:
             cash_coupon = st.number_input("現金折價卷", min_value=0, step=100)
             
         c_cust, c_memo = st.columns([1, 3])
@@ -412,7 +423,9 @@ if login_ui(user_df):
         with col_c2:
             reason_action = st.text_area("原因與處理結果", height=80)
 
-        total_rev = float(cash + card + remit)
+        # 總營業額計算：加入訂金與沒收訂金
+        total_rev = float(cash + card + remit + deposit + forfeit)
+        
         total_hrs = float(k_hours + f_hours)
         productivity = float(total_rev / total_hrs) if total_hrs > 0 else 0.0
         labor_ratio = float((total_hrs * avg_rate) / total_rev) if total_rev > 0 else 0.0
@@ -434,7 +447,9 @@ if login_ui(user_df):
         if st.button("提交報表", type="primary", use_container_width=True):
             new_row = [
                 str(date), department, 
-                int(cash), int(card), int(remit), int(cash_coupon), rev_memo,
+                int(cash), int(card), int(remit), 
+                int(deposit), int(forfeit), # 新增寫入
+                int(cash_coupon), rev_memo,
                 int(total_rev), int(current_month_rev), f"{target_ratio*100:.1f}%", 
                 int(customers), int(avg_customer_spend),
                 float(k_hours), float(f_hours), float(total_hrs), 
@@ -452,9 +467,11 @@ if login_ui(user_df):
                 st.success(f"營運報表已成功{action_text}。")
                 st.cache_data.clear()
                 
+                # 圖片生成也要傳入訂金資訊
                 finance_img_bytes = generate_finance_image(
                     date, department, total_rev, customers, avg_customer_spend, target_diff, target_ratio,
-                    cash, card, remit, cash_coupon, petty_yesterday, petty_expense, petty_replenish, petty_today,
+                    cash, card, remit, deposit, forfeit, cash_coupon, 
+                    petty_yesterday, petty_expense, petty_replenish, petty_today,
                     ikkon_coupon, thousand_coupon, total_coupon, emp_display_str
                 )
                 
@@ -469,7 +486,7 @@ if login_ui(user_df):
                 
                 col_img1, col_img2 = st.columns(2)
                 with col_img1:
-                    st.markdown("**財務日報 (提供財務群組)**")
+                    st.markdown("**財務日報 (提供會計群組)**")
                     st.image(finance_img_bytes, use_container_width=True)
                 with col_img2:
                     st.markdown("**營運日報 (提供現場群組)**")
@@ -479,6 +496,11 @@ if login_ui(user_df):
                 st.error(f"報表寫入失敗，請聯絡系統管理員。錯誤訊息：{action}")
 
     elif mode == "值班主管週報":
+        # ... (週報邏輯保持不變，程式碼太長省略，請保留原有的週報部分) ...
+        # (由於篇幅限制，這裡不重複列出週報與月度彙總的程式碼，它們不需要修改)
+        # 請確保在覆蓋時，保留下方的 "值班主管週報" 和 "月度損益彙總" 區塊。
+        
+        # --- 為確保完整性，以下補齊週報與彙總程式碼 ---
         st.title("值班主管週報")
         
         now = datetime.datetime.now()
@@ -744,4 +766,3 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
-
