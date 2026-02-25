@@ -11,7 +11,6 @@ from database import DatabaseManager
 
 st.set_page_config(page_title="IKKON 經營決策系統", layout="wide")
 
-# 更新欄位定義：新增 訂金收入 與 沒收訂金
 SHEET_COLUMNS = [
     "日期", "部門", "現金", "刷卡", "匯款", "訂金收入", "沒收訂金", "現金折價卷", "金額備註",
     "總營業額", "月營業額", "目標占比", "總來客數", "客單價", 
@@ -129,7 +128,6 @@ def render_image(content_lines, theme_color=(180, 50, 50)):
     img.save(buf, format="JPEG", quality=95)
     return buf.getvalue()
 
-# 更新圖片生成邏輯：加入訂金與沒收訂金
 def generate_finance_image(date, dept, rev, cust, spend, diff, ratio, cash, card, remit, deposit, forfeit, cash_coupon, 
                            petty_y, petty_e, petty_r, petty_t, ikkon_cp, th_cp, tot_cp, emp_display_str):
     lines = [
@@ -319,7 +317,9 @@ if login_ui(user_df):
         avg_rate = HOURLY_RATES.get(department, 205)
         month_target = TARGETS.get(department, 1000000)
         
+        # --- 自動帶入上一次零用金 ---
         last_petty_cash = 0
+        df_history = pd.DataFrame() # 預先初始化
         if report_data:
             df_history = pd.DataFrame(report_data)
             if not df_history.empty and '今日剰' in df_history.columns:
@@ -331,9 +331,23 @@ if login_ui(user_df):
                     if pd.notna(last_value) and str(last_value).strip() != "":
                         last_petty_cash = int(float(last_value))
 
+        # --- 防呆鎖：檢查當日是否已存在資料 ---
+        data_exists_warning = False
+        existing_rev_display = 0
+        if not df_history.empty and '總營業額' in df_history.columns:
+            # 檢查是否存在相同日期與部門的資料
+            check_mask = (df_history['部門'] == department) & (df_history['日期'] == pd.to_datetime(date))
+            existing_row = df_history.loc[check_mask]
+            
+            if not existing_row.empty:
+                data_exists_warning = True
+                try:
+                    existing_rev_display = int(pd.to_numeric(existing_row.iloc[0]['總營業額'], errors='coerce'))
+                except:
+                    existing_rev_display = 0
+
         st.subheader("營收數據")
         
-        # 修改為兩列，每列三個，容納新增的欄位
         c1, c2, c3 = st.columns(3)
         with c1:
             cash = st.number_input("現金收入", min_value=0, step=100)
@@ -423,9 +437,7 @@ if login_ui(user_df):
         with col_c2:
             reason_action = st.text_area("原因與處理結果", height=80)
 
-        # 總營業額計算：加入訂金與沒收訂金
         total_rev = float(cash + card + remit + deposit + forfeit)
-        
         total_hrs = float(k_hours + f_hours)
         productivity = float(total_rev / total_hrs) if total_hrs > 0 else 0.0
         labor_ratio = float((total_hrs * avg_rate) / total_rev) if total_rev > 0 else 0.0
@@ -444,11 +456,26 @@ if login_ui(user_df):
         target_ratio = float(current_month_rev / month_target) if month_target > 0 else 0.0
         target_diff = month_target - current_month_rev
 
-        if st.button("提交報表", type="primary", use_container_width=True):
+        # --- 提交按鈕與防呆鎖邏輯 ---
+        submit_clicked = False
+        confirm_overwrite = False
+        
+        if data_exists_warning:
+            st.error(f"⚠️ **警告：系統偵測到 {date} {department} 已經有一筆營收 ${existing_rev_display:,} 的資料！**")
+            st.caption("若您確定要覆寫舊資料（例如修正錯誤），請勾選下方確認框後再提交。")
+            confirm_overwrite = st.checkbox("✅ 我確認要覆蓋當日舊資料")
+            
+            if st.button("🚨 確認覆寫並提交", type="primary", use_container_width=True, disabled=not confirm_overwrite):
+                submit_clicked = True
+        else:
+            if st.button("提交報表", type="primary", use_container_width=True):
+                submit_clicked = True
+
+        if submit_clicked:
             new_row = [
                 str(date), department, 
                 int(cash), int(card), int(remit), 
-                int(deposit), int(forfeit), # 新增寫入
+                int(deposit), int(forfeit), 
                 int(cash_coupon), rev_memo,
                 int(total_rev), int(current_month_rev), f"{target_ratio*100:.1f}%", 
                 int(customers), int(avg_customer_spend),
@@ -467,7 +494,6 @@ if login_ui(user_df):
                 st.success(f"營運報表已成功{action_text}。")
                 st.cache_data.clear()
                 
-                # 圖片生成也要傳入訂金資訊
                 finance_img_bytes = generate_finance_image(
                     date, department, total_rev, customers, avg_customer_spend, target_diff, target_ratio,
                     cash, card, remit, deposit, forfeit, cash_coupon, 
@@ -496,11 +522,6 @@ if login_ui(user_df):
                 st.error(f"報表寫入失敗，請聯絡系統管理員。錯誤訊息：{action}")
 
     elif mode == "值班主管週報":
-        # ... (週報邏輯保持不變，程式碼太長省略，請保留原有的週報部分) ...
-        # (由於篇幅限制，這裡不重複列出週報與月度彙總的程式碼，它們不需要修改)
-        # 請確保在覆蓋時，保留下方的 "值班主管週報" 和 "月度損益彙總" 區塊。
-        
-        # --- 為確保完整性，以下補齊週報與彙總程式碼 ---
         st.title("值班主管週報")
         
         now = datetime.datetime.now()
@@ -706,7 +727,6 @@ if login_ui(user_df):
                     line_chart_labor = alt.Chart(chart_df).mark_line(point=True).encode(
                         x=alt.X('日期標籤:N', title='日期'),
                         y=alt.Y('人事成本數值:Q', title='人事成本佔比 (%)', scale=alt.Scale(zero=False)),
-                        color=alt.Color('部門:N', title='分店'),
                         tooltip=['日期標籤', '部門', '人事成本數值', '總工時']
                     ).properties(height=350)
                     st.altair_chart(line_chart_labor, use_container_width=True)
