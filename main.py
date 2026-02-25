@@ -465,7 +465,7 @@ if login_ui(user_df):
             st.caption("若您確定要覆寫舊資料（例如修正錯誤），請勾選下方確認框後再提交。")
             confirm_overwrite = st.checkbox("✅ 我確認要覆蓋當日舊資料")
             
-            if st.button("🚨 確認覆寫並提交", type="primary", use_container_width=True, disabled=not confirm_overwrite):
+            if st.button("確認覆寫並提交", type="primary", use_container_width=True, disabled=not confirm_overwrite):
                 submit_clicked = True
         else:
             if st.button("提交報表", type="primary", use_container_width=True):
@@ -786,3 +786,4 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
+
