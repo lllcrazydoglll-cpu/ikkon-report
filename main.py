@@ -35,10 +35,19 @@ class EnhancedDatabaseManager(DatabaseManager):
             
             for i, row in enumerate(all_values):
                 if i == 0: continue
-                # 假設第一欄都是日期，第二欄都是部門
-                if len(row) >= 2 and row[0] == date_str and row[1] == department:
-                    target_row_idx = i + 1
-                    break
+                
+                # --- 核心修正：區分日報與週報的覆寫條件 (Primary Key) ---
+                if sheet_name == "WeeklyReports":
+                    # 週報：同日期 + 同部門 + 「同填寫人」才進行覆蓋 (避免不同主管的週報互相覆寫)
+                    author = new_row[-1] # 週報陣列的最後一項是填寫人
+                    if len(row) >= 12 and row[0] == date_str and row[1] == department and str(row[11]).strip() == str(author).strip():
+                        target_row_idx = i + 1
+                        break
+                else:
+                    # 日報 (Sheet1)：同日期 + 同部門 即進行覆蓋
+                    if len(row) >= 2 and row[0] == date_str and row[1] == department:
+                        target_row_idx = i + 1
+                        break
             
             if target_row_idx:
                 def get_col_letter(col_idx):
@@ -317,7 +326,6 @@ if login_ui(user_df):
         avg_rate = HOURLY_RATES.get(department, 205)
         month_target = TARGETS.get(department, 1000000)
         
-        # --- 自動帶入上一次零用金 ---
         last_petty_cash = 0
         df_history = pd.DataFrame() # 預先初始化
         if report_data:
@@ -331,11 +339,9 @@ if login_ui(user_df):
                     if pd.notna(last_value) and str(last_value).strip() != "":
                         last_petty_cash = int(float(last_value))
 
-        # --- 防呆鎖：檢查當日是否已存在資料 ---
         data_exists_warning = False
         existing_rev_display = 0
         if not df_history.empty and '總營業額' in df_history.columns:
-            # 檢查是否存在相同日期與部門的資料
             check_mask = (df_history['部門'] == department) & (df_history['日期'] == pd.to_datetime(date))
             existing_row = df_history.loc[check_mask]
             
@@ -456,7 +462,6 @@ if login_ui(user_df):
         target_ratio = float(current_month_rev / month_target) if month_target > 0 else 0.0
         target_diff = month_target - current_month_rev
 
-        # --- 提交按鈕與防呆鎖邏輯 ---
         submit_clicked = False
         confirm_overwrite = False
         
@@ -727,6 +732,7 @@ if login_ui(user_df):
                     line_chart_labor = alt.Chart(chart_df).mark_line(point=True).encode(
                         x=alt.X('日期標籤:N', title='日期'),
                         y=alt.Y('人事成本數值:Q', title='人事成本佔比 (%)', scale=alt.Scale(zero=False)),
+                        color=alt.Color('部門:N', title='分店'),
                         tooltip=['日期標籤', '部門', '人事成本數值', '總工時']
                     ).properties(height=350)
                     st.altair_chart(line_chart_labor, use_container_width=True)
@@ -786,4 +792,3 @@ if login_ui(user_df):
             st.dataframe(filtered_df[display_cols].sort_values(by='日期', ascending=False), use_container_width=True)
         else:
             st.info("尚未有數據。")
-
