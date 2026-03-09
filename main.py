@@ -25,7 +25,6 @@ SID = "16FcpJZLhZjiRreongRDbsKsAROfd5xxqQqQMfAI7H08"
 
 class EnhancedDatabaseManager(DatabaseManager):
     def upsert_report(self, sheet_name, date_str, department, new_row):
-        """通用型覆寫寫入邏輯，支援日報與週報"""
         if not self.client: return False, "連線失敗"
         try:
             sh = self.client.open_by_key(self.sid)
@@ -35,16 +34,12 @@ class EnhancedDatabaseManager(DatabaseManager):
             
             for i, row in enumerate(all_values):
                 if i == 0: continue
-                
-                # --- 核心修正：區分日報與週報的覆寫條件 (Primary Key) ---
                 if sheet_name == "WeeklyReports":
-                    # 週報：同日期 + 同部門 + 「同填寫人」才進行覆蓋 (避免不同主管的週報互相覆寫)
-                    author = new_row[-1] # 週報陣列的最後一項是填寫人
+                    author = new_row[-1] 
                     if len(row) >= 12 and row[0] == date_str and row[1] == department and str(row[11]).strip() == str(author).strip():
                         target_row_idx = i + 1
                         break
                 else:
-                    # 日報 (Sheet1)：同日期 + 同部門 即進行覆蓋
                     if len(row) >= 2 and row[0] == date_str and row[1] == department:
                         target_row_idx = i + 1
                         break
@@ -83,7 +78,6 @@ if user_df is None and settings_df is None:
     st.error("系統初始化失敗：無法連接至核心資料庫，請檢查網路連線或授權設定。")
     st.stop()
 
-# --- 圖片生成引擎與排版邏輯 ---
 @st.cache_resource
 def get_chinese_font():
     font_path = "NotoSansCJKtc-Regular.otf"
@@ -137,16 +131,21 @@ def render_image(content_lines, theme_color=(180, 50, 50)):
     img.save(buf, format="JPEG", quality=95)
     return buf.getvalue()
 
-def generate_finance_image(date, dept, rev, cust, spend, diff, ratio, cash, card, remit, deposit, forfeit, cash_coupon, 
+def generate_finance_image(date, dept, month_rev, month_cust, month_spend, ratio, 
+                           today_rev, today_cust, today_spend, 
+                           cash, card, remit, deposit, forfeit, cash_coupon, 
                            petty_y, petty_e, petty_r, petty_t, ikkon_cp, th_cp, tot_cp, emp_display_str):
     lines = [
         "【 IKKON 財務日報 】",
         f"日期：{date} | 分店：{dept}",
         "--------------------------------------",
         "[ 營收指標 ]",
-        f"總營業額：${rev:,.0f} | 總來客數：{cust} 人",
-        f"客單價：${spend:,.0f}",
-        f"距離目標：${diff:,.0f} (目標占比 {ratio*100:.1f}%)",
+        f"總營業額：${month_rev:,.0f} | 總來客數：{int(month_cust)} 人",
+        f"平均客單價：${month_spend:,.0f}",
+        f"目標占比：{ratio*100:.1f}%",
+        "",
+        f"今日營收：${today_rev:,.0f} | 今日來客數：{int(today_cust)} 人",
+        f"今日客單價：${today_spend:,.0f}",
         "",
         "[ 支付結構 ]",
         f"現金：${cash:,.0f} | 刷卡：${card:,.0f}",
@@ -327,7 +326,7 @@ if login_ui(user_df):
         month_target = TARGETS.get(department, 1000000)
         
         last_petty_cash = 0
-        df_history = pd.DataFrame() # 預先初始化
+        df_history = pd.DataFrame() 
         if report_data:
             df_history = pd.DataFrame(report_data)
             if not df_history.empty and '今日剰' in df_history.columns:
@@ -450,17 +449,23 @@ if login_ui(user_df):
         avg_customer_spend = float(total_rev / customers) if customers > 0 else 0.0
 
         current_month_rev = total_rev
+        current_month_cust = customers
+        
         if report_data:
             raw_df = pd.DataFrame(report_data)
             if not raw_df.empty:
                 raw_df['日期'] = pd.to_datetime(raw_df['日期'])
                 current_month_str = date.strftime('%Y-%m')
                 mask = (raw_df['部門'] == department) & (raw_df['日期'].dt.strftime('%Y-%m') == current_month_str) & (raw_df['日期'] < pd.to_datetime(date))
+                
                 historical_month_rev = float(pd.to_numeric(raw_df.loc[mask, '總營業額'], errors='coerce').fillna(0).sum())
+                historical_month_cust = float(pd.to_numeric(raw_df.loc[mask, '總來客數'], errors='coerce').fillna(0).sum())
+                
                 current_month_rev += historical_month_rev
+                current_month_cust += historical_month_cust
         
         target_ratio = float(current_month_rev / month_target) if month_target > 0 else 0.0
-        target_diff = month_target - current_month_rev
+        current_month_spend = float(current_month_rev / current_month_cust) if current_month_cust > 0 else 0.0
 
         submit_clicked = False
         confirm_overwrite = False
@@ -500,7 +505,9 @@ if login_ui(user_df):
                 st.cache_data.clear()
                 
                 finance_img_bytes = generate_finance_image(
-                    date, department, total_rev, customers, avg_customer_spend, target_diff, target_ratio,
+                    date, department, 
+                    current_month_rev, current_month_cust, current_month_spend, target_ratio,
+                    total_rev, customers, avg_customer_spend,
                     cash, card, remit, deposit, forfeit, cash_coupon, 
                     petty_yesterday, petty_expense, petty_replenish, petty_today,
                     ikkon_coupon, thousand_coupon, total_coupon, emp_display_str
