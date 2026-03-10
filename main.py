@@ -68,7 +68,8 @@ class EnhancedDatabaseManager(DatabaseManager):
 
 db = EnhancedDatabaseManager(SID, st.secrets)
 
-@st.cache_data(ttl=300)
+# 防護網一：延長背景重整週期至 3600 秒 (1小時)，避免打字時背景強制刷新導致斷線崩潰
+@st.cache_data(ttl=3600)
 def load_cached_data():
     return db.get_all_data()
 
@@ -78,6 +79,7 @@ if user_df is None and settings_df is None:
     st.error("系統初始化失敗：無法連接至核心資料庫，請檢查網路連線或授權設定。")
     st.stop()
 
+# --- 圖片生成引擎與排版邏輯 ---
 @st.cache_resource
 def get_chinese_font():
     font_path = "NotoSansCJKtc-Regular.otf"
@@ -216,6 +218,25 @@ def generate_weekly_image(date, dept, start_d, end_d, rev, spend, prod, review, 
 
 def login_ui(user_df):
     if st.session_state.get("logged_in"): return True
+    
+    # 防護網二：自動斷線重連。如果網址內有儲存的帳號參數，自動恢復登入狀態
+    if user_df is not None and not user_df.empty:
+        user_df.columns = user_df.columns.astype(str).str.strip()
+        if '帳號名稱' in user_df.columns and '密碼' in user_df.columns:
+            query_u = st.query_params.get("u")
+            if query_u:
+                user_df['帳號名稱_clean'] = user_df['帳號名稱'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                match = user_df[user_df['帳號名稱_clean'] == query_u]
+                if not match.empty:
+                    user_info = match.iloc[0]
+                    st.session_state.update({
+                        "logged_in": True, 
+                        "user_role": str(user_info.get('權限等級', 'staff')).strip().lower(), 
+                        "user_name": str(user_info['帳號名稱']).strip(), 
+                        "dept_access": str(user_info.get('負責部門', '')).strip()
+                    })
+                    return True
+
     st.title("IKKON 系統管理登入")
     
     with st.form("login_form"):
@@ -244,6 +265,8 @@ def login_ui(user_df):
                             "user_name": str(user_info['帳號名稱']).strip(), 
                             "dept_access": safe_dept
                         })
+                        # 成功登入後，將帳號寫入網址以確保斷線可自動重連
+                        st.query_params["u"] = input_user_clean
                         st.rerun()
                     else:
                         st.error("帳號或密碼錯誤。請注意大小寫，並確保無輸入多餘空白。")
@@ -286,6 +309,7 @@ if login_ui(user_df):
             st.rerun()
         if st.button("安全登出"):
             st.session_state.clear()
+            st.query_params.clear() # 登出時一併清除自動連線網址
             st.rerun()
 
     if mode == "系統後台管理":
@@ -373,7 +397,8 @@ if login_ui(user_df):
         with c_cust:
             customers = st.number_input("總來客數", min_value=1, step=1)
         with c_memo:
-            rev_memo = st.text_area("金額備註", "無", height=68)
+            # 防護網三：綁定記憶金鑰 key="daily_rev_memo"
+            rev_memo = st.text_area("金額備註", "無", height=68, key="daily_rev_memo")
 
         st.subheader("工時數據")
         t1, t2 = st.columns(2)
@@ -432,15 +457,17 @@ if login_ui(user_df):
         emp_display_str = "、".join(discount_displays) if discount_displays else "無"
 
         st.subheader("營運與客訴回報")
-        ops_note = st.text_area("營運狀況回報", height=120)
-        announcement = st.text_area("事項宣達", height=80)
+        # 防護網三：綁定記憶金鑰
+        ops_note = st.text_area("營運狀況回報", height=120, key="daily_ops_note")
+        announcement = st.text_area("事項宣達", height=80, key="daily_announcement")
         
         col_c1, col_c2 = st.columns([1, 2])
         with col_c1:
             tags = st.multiselect("客訴分類", ["餐點品質", "服務態度", "環境衛生", "上菜效率", "訂位系統", "其他"])
             tags_str = ", ".join(tags) if tags else "無"
         with col_c2:
-            reason_action = st.text_area("原因與處理結果", height=80)
+            # 防護網三：綁定記憶金鑰
+            reason_action = st.text_area("原因與處理結果", height=80, key="daily_reason_action")
 
         total_rev = float(cash + card + remit + deposit + forfeit)
         total_hrs = float(k_hours + f_hours)
@@ -503,6 +530,11 @@ if login_ui(user_df):
                 action_text = "更新" if action == "updated" else "新增"
                 st.success(f"營運報表已成功{action_text}。")
                 st.cache_data.clear()
+                
+                # 提交成功後，將暫存的文字清除，維持下一次填寫時畫面乾淨
+                for k in ["daily_rev_memo", "daily_ops_note", "daily_announcement", "daily_reason_action"]:
+                    if k in st.session_state:
+                        del st.session_state[k]
                 
                 finance_img_bytes = generate_finance_image(
                     date, department, 
@@ -591,25 +623,26 @@ if login_ui(user_df):
         st.divider()
         st.subheader("營運深度分析 (請詳細論述)")
         
+        # 防護網三：綁定記憶金鑰，防止心血消失
         st.markdown("**1. 數據與營運檢討**")
-        review = st.text_area("1", placeholder="例：本週業績落後目標 5%，主因為寒流來襲，顧客銳減。但在銷售上成功推出高單價商品，拉高了整體客單價...", height=100, label_visibility="collapsed")
+        review = st.text_area("1", placeholder="例：本週業績落後目標 5%，主因為寒流來襲，顧客銳減。但在銷售上成功推出高單價商品，拉高了整體客單價...", height=100, label_visibility="collapsed", key="wk_review")
         
         st.markdown("**2. 團隊與人事狀況**")
-        hr_status = st.text_area("2", placeholder="例：外場新人 A 培訓進度超前，已可獨立點餐；內場 B 預計下月離職，需盡快徵人遞補...", height=100, label_visibility="collapsed")
+        hr_status = st.text_area("2", placeholder="例：外場新人 A 培訓進度超前，已可獨立點餐；內場 B 預計下月離職，需盡快徵人遞補...", height=100, label_visibility="collapsed", key="wk_hr")
         
         st.markdown("**3. 行銷觀察與改善建議**")
-        market = st.text_area("3", placeholder="例：顧客對於新推出的A商品相當喜歡，建議可成為常備商品；下週藝文特區有啤酒節，預計會帶來人潮...", height=100, label_visibility="collapsed")
+        market = st.text_area("3", placeholder="例：顧客對於新推出的A商品相當喜歡，建議可成為常備商品；下週藝文特區有啤酒節，預計會帶來人潮...", height=100, label_visibility="collapsed", key="wk_market")
         
         st.markdown("**4. 下週行動方針 (請具體列出三項目標)**")
         
         st.markdown("**行動一**")
-        action_1 = st.text_area("a1", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。", height=100, label_visibility="collapsed")
+        action_1 = st.text_area("a1", placeholder="例：針對新人 A 進行高單價商品推銷話術驗收。", height=100, label_visibility="collapsed", key="wk_a1")
         
         st.markdown("**行動二**")
-        action_2 = st.text_area("a2", placeholder="例：調整內場備料方式，縮短出餐時間。", height=100, label_visibility="collapsed")
+        action_2 = st.text_area("a2", placeholder="例：調整內場備料方式，縮短出餐時間。", height=100, label_visibility="collapsed", key="wk_a2")
         
         st.markdown("**行動三**")
-        action_3 = st.text_area("a3", placeholder="例：在週三前會完成聖誕節布置。", height=100, label_visibility="collapsed")
+        action_3 = st.text_area("a3", placeholder="例：在週三前會完成聖誕節布置。", height=100, label_visibility="collapsed", key="wk_a3")
         
         actions_str = f"1. {action_1.strip()}\n2. {action_2.strip()}\n3. {action_3.strip()}".strip()
 
@@ -628,6 +661,12 @@ if login_ui(user_df):
                 
                 if success:
                     st.success("週報已成功寫入核心資料庫！")
+                    st.cache_data.clear()
+                    
+                    # 提交成功後，清除快取防止舊文章卡在輸入框內
+                    for k in ["wk_review", "wk_hr", "wk_market", "wk_a1", "wk_a2", "wk_a3"]:
+                        if k in st.session_state:
+                            del st.session_state[k]
                     
                     weekly_img_bytes = generate_weekly_image(
                         str(selected_date), department, str(start_of_week), str(end_of_week),
