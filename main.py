@@ -1,10 +1,4 @@
 import streamlit as st
-# ... 其他 import ...
-
-# 暫時加入的系統環境偵錯碼
-st.write("目前系統成功讀取到的機密設定區塊有：", list(st.secrets.keys()))
-
-import streamlit as st
 import datetime
 import pandas as pd
 import altair as alt
